@@ -52,15 +52,15 @@ scdl me -f
 --version                       Show version
 -l [url]                        URL can be track/playlist/user
 -s [search_query]               Search for a track/playlist/user and use the first result
--a                              Download all tracks of user (including reposts)
--t                              Download all uploads of a user (no reposts)
+        -a                              Download all tracks of user (including reposts)
+        -t                              Download all uploads of a user (no reposts)
 -f                              Download all favorites (likes) of a user
 -C                              Download all tracks commented on by a user
--p                              Download all playlists of a user
+        -p                              Download all playlists of a user
 -r                              Download all reposts of user
 -c                              Continue if a downloaded file already exists
---force-metadata                This will set metadata on already downloaded track
--o [offset]                     Start downloading a playlist from the [offset]th track (starting with 1)
+        --force-metadata                This will set metadata on already downloaded track
+        -o [offset]                     Start downloading a playlist from the [offset]th track (starting with 1)
 --addtimestamp                  Add track creation timestamp to filename,
                                 which allows for chronological sorting
                                 (Deprecated. Use --name-format instead.)
@@ -82,7 +82,7 @@ scdl me -f
 --sync [file]                   Compares an archive file to a playlist and downloads/removes any changed tracks
 --flac                          Convert original files to .flac. Only works if the original file is lossless quality
 --no-album-tag                  On some player track get the same cover art if from the same album, this prevent it
---original-art                  Download original cover art, not just 500x500 JPEG
+        --original-art                  Download original cover art, not just 500x500 JPEG
 --original-name                 Do not change name of original file downloads
 --original-metadata             Do not change metadata of original file downloads
 --no-original                   Do not download original file; only mp3, m4a, or opus

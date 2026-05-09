@@ -78,7 +78,6 @@ import configparser
 import importlib
 import importlib.metadata
 import logging
-import os
 import posixpath
 import shlex
 import sys
@@ -173,10 +172,7 @@ def _main() -> None:
     elif arguments["--error"]:
         logger.level = logging.ERROR
 
-    if "XDG_CONFIG_HOME" in os.environ:
-        config_file = Path(os.environ["XDG_CONFIG_HOME"], "scdl", "scdl.cfg")
-    else:
-        config_file = Path.home().joinpath(".config", "scdl", "scdl.cfg")
+    config_file = Path(__file__).with_name("scdl.cfg")
 
     # import conf file
     config = _get_config(config_file)
