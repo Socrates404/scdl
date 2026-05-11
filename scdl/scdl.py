@@ -9,7 +9,7 @@ Usage:
     [--original-name][--original-metadata][--no-original][--only-original]
     [--name-format <format>][--strict-playlist][--playlist-name-format <format>]
     [--client-id <id>][--auth-token <token>][--overwrite][--no-playlist][--opus]
-    [--add-description][--yt-dlp-args <argstring>]
+    [--add-description][--yt-dlp-args <argstring>][--failed-log <file>]
 
     scdl -h | --help
     scdl --version
@@ -72,6 +72,7 @@ Options:
     --add-description               Adds the description to a separate txt file
     --opus                          Prefer downloading opus streams over mp3 streams
     --yt-dlp-args [argstring]       String with custom args to forward to yt-dlp
+    --failed-log [file]             Append failed track info to this file (one line per failure)
 """
 
 from __future__ import annotations
@@ -158,6 +159,7 @@ class SCDLArgs(TypedDict):
     s: str | None
     t: bool
     yt_dlp_args: str
+    failed_log: str | None
 
 
 __version__ = importlib.metadata.version("scdl")
@@ -554,9 +556,45 @@ def download_url(url: str, **scdl_args: Unpack[SCDLArgs]) -> None:
         for pp, when in postprocessors:
             ydl.add_post_processor(pp, when)
 
+        if scdl_args.get("failed_log"):
+            from functools import partial as _partial
+
+            failed_log_path = scdl_args["failed_log"]
+            _fl_attempted: dict[str, str] = {}  # archive_id -> url
+            _fl_downloaded: set[str] = set()
+
+            _old_match_entry = ydl._match_entry
+
+            def _fl_match_entry(ydl_, info_dict, incomplete=False, silent=False):
+                result = _old_match_entry(info_dict, incomplete, silent)
+                if result is None:
+                    aid = ydl_._make_archive_id(info_dict)
+                    _fl_attempted[aid] = (
+                        info_dict.get("webpage_url")
+                        or info_dict.get("permalink_url")
+                        or info_dict.get("original_url")
+                        or info_dict.get("url")
+                        or ""
+                    )
+                return result
+
+            ydl._match_entry = _partial(_fl_match_entry, ydl)
+
+            def _fl_track_done(d):
+                if d["status"] == "finished":
+                    _fl_downloaded.add(ydl._make_archive_id(d["info_dict"]))
+
+            ydl.add_progress_hook(_fl_track_done)
+
         sync = SyncDownloadHelper(scdl_args, ydl)
         ydl.download(url)
         sync.post_download()
+
+        if scdl_args.get("failed_log"):
+            with open(failed_log_path, "w", encoding="utf-8") as fh:
+                for archive_id, url in _fl_attempted.items():
+                    if archive_id not in _fl_downloaded:
+                        fh.write(f"{archive_id} {url}\n")
 
 
 if __name__ == "__main__":

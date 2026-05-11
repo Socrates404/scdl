@@ -13,6 +13,7 @@ class SyncDownloadHelper:
         self._sync_file = scdl_args.get("sync")
         self._all_files: dict[str, Path] = {}
         self._downloaded: set[str] = set()
+        self._attempted: dict[str, str] = {}  # archive_id -> track URL
         self._init()
 
     def _init(self):
@@ -23,9 +24,7 @@ class SyncDownloadHelper:
         def track_downloaded(d):
             if d["status"] != "finished":
                 return
-
             info = d["info_dict"]
-
             id_ = f"soundcloud {info['id']}"
             self._downloaded.add(id_)
             self._all_files[id_] = d["filename"]
@@ -46,12 +45,25 @@ class SyncDownloadHelper:
             if ioe.errno != errno.ENOENT:
                 raise
 
-        # track ids checked against the archive
+        # track ids checked against the archive; capture info for new tracks being attempted
         old_match_entry = self._ydl._match_entry
 
         def _match_entry(ydl, info_dict, incomplete=False, silent=False):
-            self._downloaded.add(ydl._make_archive_id(info_dict))
-            return old_match_entry(info_dict, incomplete, silent)
+            archive_id = ydl._make_archive_id(info_dict)
+            self._downloaded.add(archive_id)
+            result = old_match_entry(info_dict, incomplete, silent)
+            # result is None → track passed all filters and is not in archive → being attempted.
+            # Called twice per track (incomplete=True then incomplete=False); overwrite so the
+            # richer call wins.
+            if result is None:
+                self._attempted[archive_id] = (
+                    info_dict.get("webpage_url")
+                    or info_dict.get("permalink_url")
+                    or info_dict.get("original_url")
+                    or info_dict.get("url")
+                    or ""
+                )
+            return result
 
         self._ydl._match_entry = partial(_match_entry, self._ydl)
 
@@ -70,3 +82,9 @@ class SyncDownloadHelper:
             for k, v in self._all_files.items():
                 if k in self._downloaded:
                     archive_file.write(f"{k} {v}\n")
+
+        failed_file = Path(self._sync_file).with_suffix(".failed")
+        with locked_file(str(failed_file), "w", encoding="utf-8") as f:
+            for archive_id, url in self._attempted.items():
+                if archive_id not in self._all_files:
+                    f.write(f"{archive_id} {url}\n")
