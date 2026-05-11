@@ -5,7 +5,7 @@ Usage:
     [-c | --force-metadata][-o <offset>][--hidewarnings][--debug | --error]
     [--path <path>][--addtofile][--addtimestamp][--onlymp3][--hide-progress][--min-size <size>]
     [--max-size <size>][--no-album-tag][--no-playlist-folder]
-    [--download-archive <file>][--sync <file>][--extract-artist][--flac][--original-art]
+    [--download-archive <file>][--sync][--extract-artist][--flac][--original-art]
     [--original-name][--original-metadata][--no-original][--only-original]
     [--name-format <format>][--strict-playlist][--playlist-name-format <format>]
     [--client-id <id>][--auth-token <token>][--overwrite][--no-playlist][--opus]
@@ -47,8 +47,10 @@ Options:
                                     instead of making a playlist subfolder
     --onlymp3                       Download only mp3 files
     --path [path]                   Use a custom path for downloaded files
-    --sync [file]                   Compares an archive file to a playlist and downloads/removes
-                                    any changed tracks
+    --sync                          Compares an auto-managed archive to a playlist and
+                                    downloads/removes any changed tracks. Archive is stored in
+                                    archive_trackers/<artist>_<slug>.txt relative to the current
+                                    working directory
     --flac                          Convert original files to .flac. Only works if the original
                                     file is lossless quality
     --no-album-tag                  On some player track get the same cover art if from the same
@@ -82,6 +84,7 @@ import posixpath
 import shlex
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 from typing import TYPE_CHECKING, TypedDict
 
 from docopt import docopt
@@ -151,7 +154,7 @@ class SCDLArgs(TypedDict):
     playlist_name_format: str
     r: bool
     strict_playlist: bool
-    sync: str | None
+    sync: str | bool | None
     s: str | None
     t: bool
     yt_dlp_args: str
@@ -244,6 +247,15 @@ def _main() -> None:
             sys.exit(1)
 
     arguments["--path"] = Path(arguments["--path"] or config["scdl"]["path"] or ".").resolve()
+
+    if arguments["--sync"]:
+        url_path = urlparse(arguments["-l"]).path.strip("/")
+        parts = [p for p in url_path.split("/") if p != "sets"]
+        archive_name = "_".join(parts) if parts else "unknown"
+        archive_dir = Path.cwd() / "archive_trackers"
+        archive_dir.mkdir(exist_ok=True)
+        arguments["--sync"] = str(archive_dir / f"{archive_name}.txt")
+        logger.info(f"[scdl] Sync archive: {arguments['--sync']}")
 
     # convert arguments dict to python-friendly kwarg names (no hyphens)
     python_args = {}

@@ -12,14 +12,20 @@ pipx upgrade scdl
 
 
 
-# Download one playlist
+# Download one playlist (avoid using it without the "--sync" flag!)
 scdl -l https://soundcloud.com/pandadub/sets/the-lost-ship
 
-# Download only new tracks from a playlist
-scdl -l https://soundcloud.com/pandadub/sets/the-lost-ship --download-archive archive.txt -c
 
-# Sync playlist
-scdl -l https://soundcloud.com/pandadub/sets/the-lost-ship --sync archive.txt
+# Sync playlist: Download only new tracks from a playlist
+scdl -l https://soundcloud.com/pandadub/sets/the-lost-ship --sync
+(we removed archive.txt argument to auto name the file and place it in archive_trackers)
+/!\ it will remove songs that are no longer in the playlist !
+
+# Sync all playlists at once (may fail because of rate limit, individual playlist sync is suggested)
+
+python sync_playlists.py             # 8s jittered delay between playlists (safe default)
+python sync_playlists.py --delay 15  # slower, if still hitting 403s
+python sync_playlists.py --delay 0   # no delay (risky, may 403)
 
 
 

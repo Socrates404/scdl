@@ -59,9 +59,12 @@ class SyncDownloadHelper:
         if not self._enabled:
             return
 
-        # remove extra files
-        to_remove = {self._all_files[key] for key in (set(self._all_files.keys()) - self._downloaded)}
-        self._ydl._delete_downloaded_files(*to_remove)
+        # rename files for tracks no longer in the playlist
+        to_unsync = {key: self._all_files[key] for key in (set(self._all_files.keys()) - self._downloaded)}
+        for filepath in to_unsync.values():
+            filepath = Path(filepath)
+            if filepath.exists() and not filepath.name.startswith("[unsync] "):
+                filepath.rename(filepath.parent / f"[unsync] {filepath.name}")
 
         with locked_file(self._sync_file, "w", encoding="utf-8") as archive_file:
             for k, v in self._all_files.items():

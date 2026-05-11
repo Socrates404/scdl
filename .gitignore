@@ -14,3 +14,6 @@ __pycache__/
 .idea
 .python-version
 .DS_Store
+archive_trackers/
+.claude/
+playlists-list.md
