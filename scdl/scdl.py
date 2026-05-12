@@ -9,7 +9,7 @@ Usage:
     [--original-name][--original-metadata][--no-original][--only-original]
     [--name-format <format>][--strict-playlist][--playlist-name-format <format>]
     [--client-id <id>][--auth-token <token>][--overwrite][--no-playlist][--opus]
-    [--add-description][--yt-dlp-args <argstring>][--failed-log <file>]
+    [--add-description][--yt-dlp-args <argstring>][--failed-log <file>][--premium-log <file>]
 
     scdl -h | --help
     scdl --version
@@ -73,6 +73,8 @@ Options:
     --opus                          Prefer downloading opus streams over mp3 streams
     --yt-dlp-args [argstring]       String with custom args to forward to yt-dlp
     --failed-log [file]             Append failed track info to this file (one line per failure)
+    --premium-log [file]            Append GO+ preview tracks (≤30s, skipped by duration filter)
+                                    to this file
 """
 
 from __future__ import annotations
@@ -160,6 +162,7 @@ class SCDLArgs(TypedDict):
     t: bool
     yt_dlp_args: str
     failed_log: str | None
+    premium_log: str | None
 
 
 __version__ = importlib.metadata.version("scdl")
@@ -234,6 +237,9 @@ def _main() -> None:
     if not arguments["--playlist-name-format"]:
         arguments["--playlist-name-format"] = config["scdl"]["playlist_name_format"]
 
+    if not arguments["--yt-dlp-args"]:
+        arguments["--yt-dlp-args"] = config["scdl"].get("yt_dlp_args", "")
+
     if arguments["me"]:
         # set url to profile associated with auth token
         me = client.get_me()
@@ -250,14 +256,22 @@ def _main() -> None:
 
     arguments["--path"] = Path(arguments["--path"] or config["scdl"]["path"] or ".").resolve()
 
+    # Derive a stable archive name from the URL — used for sync, failed, and premium logs
+    url_path = urlparse(arguments["-l"]).path.strip("/")
+    parts = [p for p in url_path.split("/") if p != "sets"]
+    archive_name = "_".join(parts) if parts else "unknown"
+    archive_dir = Path.cwd() / "archive_trackers"
+    archive_dir.mkdir(exist_ok=True)
+
     if arguments["--sync"]:
-        url_path = urlparse(arguments["-l"]).path.strip("/")
-        parts = [p for p in url_path.split("/") if p != "sets"]
-        archive_name = "_".join(parts) if parts else "unknown"
-        archive_dir = Path.cwd() / "archive_trackers"
-        archive_dir.mkdir(exist_ok=True)
         arguments["--sync"] = str(archive_dir / f"{archive_name}.txt")
         logger.info(f"[scdl] Sync archive: {arguments['--sync']}")
+
+    if not arguments["--failed-log"]:
+        arguments["--failed-log"] = str(archive_dir / f"{archive_name}.failed")
+
+    if not arguments["--premium-log"]:
+        arguments["--premium-log"] = str(archive_dir / f"{archive_name}.premium")
 
     # convert arguments dict to python-friendly kwarg names (no hyphens)
     python_args = {}
@@ -560,8 +574,10 @@ def download_url(url: str, **scdl_args: Unpack[SCDLArgs]) -> None:
             from functools import partial as _partial
 
             failed_log_path = scdl_args["failed_log"]
-            _fl_attempted: dict[str, str] = {}  # archive_id -> url
+            _fl_attempted: dict[str, dict] = {}  # archive_id -> {url, title, uploader}
             _fl_downloaded: set[str] = set()
+            _fl_errors: dict[str, str] = {}      # archive_id -> first error message
+            _current_aid: list[str] = [""]       # mutable ref updated per track
 
             _old_match_entry = ydl._match_entry
 
@@ -569,16 +585,59 @@ def download_url(url: str, **scdl_args: Unpack[SCDLArgs]) -> None:
                 result = _old_match_entry(info_dict, incomplete, silent)
                 if result is None:
                     aid = ydl_._make_archive_id(info_dict)
-                    _fl_attempted[aid] = (
-                        info_dict.get("webpage_url")
-                        or info_dict.get("permalink_url")
-                        or info_dict.get("original_url")
-                        or info_dict.get("url")
-                        or ""
-                    )
+                    if aid is None:  # skip playlist-level entries with no valid id
+                        return result
+                    _fl_attempted[aid] = {
+                        "url": (
+                            info_dict.get("webpage_url")
+                            or info_dict.get("permalink_url")
+                            or info_dict.get("original_url")
+                            or info_dict.get("url")
+                            or ""
+                        ),
+                        "title": info_dict.get("title") or "",
+                        "uploader": info_dict.get("uploader") or "",
+                    }
+                    _current_aid[0] = aid
                 return result
 
             ydl._match_entry = _partial(_fl_match_entry, ydl)
+
+            _base_logger = ydl.params["logger"]
+
+            # yt-dlp routes all screen output through logger.debug; the line
+            # "[soundcloud] uploader/slug: Downloading info JSON" arrives here
+            # before the format fetch, so we can backfill title/uploader.
+            _SC_INFO_PREFIX = "[soundcloud] "
+            _SC_INFO_SUFFIX = ": Downloading info JSON"
+
+            class _TrackErrorLogger:
+                def debug(self, msg, *args, **kwargs):
+                    _base_logger.debug(msg, *args, **kwargs)
+                    if (
+                        isinstance(msg, str)
+                        and _current_aid[0]
+                        and _current_aid[0] in _fl_attempted
+                        and msg.startswith(_SC_INFO_PREFIX)
+                        and msg.endswith(_SC_INFO_SUFFIX)
+                    ):
+                        slug = msg[len(_SC_INFO_PREFIX):-len(_SC_INFO_SUFFIX)]
+                        parts = slug.split("/")
+                        entry = _fl_attempted[_current_aid[0]]
+                        if not entry["uploader"] and len(parts) >= 1:
+                            entry["uploader"] = parts[0]
+                        if not entry["title"] and len(parts) >= 2:
+                            entry["title"] = parts[1].replace("-", " ")
+
+                def info(self, msg, *args, **kwargs): _base_logger.info(msg, *args, **kwargs)
+                def warning(self, msg, *args, **kwargs): _base_logger.warning(msg, *args, **kwargs)
+
+                def error(self, msg, *args, **kwargs):
+                    if _current_aid[0]:
+                        _fl_errors.setdefault(_current_aid[0], str(msg))
+                    _base_logger.error(msg, *args, **kwargs)
+
+            ydl.params["logger"] = _TrackErrorLogger()
 
             def _fl_track_done(d):
                 if d["status"] == "finished":
@@ -586,15 +645,79 @@ def download_url(url: str, **scdl_args: Unpack[SCDLArgs]) -> None:
 
             ydl.add_progress_hook(_fl_track_done)
 
+        if scdl_args.get("premium_log"):
+            from functools import partial as _partial
+
+            premium_log_path = scdl_args["premium_log"]
+            _prem_old_match_entry = ydl._match_entry
+
+            def _prem_match_entry(ydl_, info_dict, incomplete=False, silent=False):
+                result = _prem_old_match_entry(info_dict, incomplete, silent)
+                if result is not None and not incomplete:
+                    duration = info_dict.get("duration")
+                    if duration is not None and duration <= 30:
+                        track_url = (
+                            info_dict.get("webpage_url")
+                            or info_dict.get("original_url")
+                            or info_dict.get("url")
+                            or ""
+                        )
+                        title = info_dict.get("title", "unknown")
+                        with open(premium_log_path, "a", encoding="utf-8") as fh:
+                            fh.write(f"{title} | {track_url} | {duration:.1f}s\n")
+                return result
+
+            ydl._match_entry = _partial(_prem_match_entry, ydl)
+
         sync = SyncDownloadHelper(scdl_args, ydl)
         ydl.download(url)
         sync.post_download()
 
         if scdl_args.get("failed_log"):
+            import json
+
+            def _sc_track_policy(track_id: str) -> str:
+                """Return the SoundCloud policy field for a track, or '' on failure.
+                Uses ydl's HTTP stack so proxy/DNS config matches the main download."""
+                client_id = scdl_args.get("client_id", "")
+                api_url = f"https://api-v2.soundcloud.com/tracks/{track_id}?client_id={client_id}"
+                try:
+                    with ydl.urlopen(api_url) as resp:
+                        return json.loads(resp.read()).get("policy", "")
+                except Exception:
+                    return ""
+
             with open(failed_log_path, "w", encoding="utf-8") as fh:
-                for archive_id, url in _fl_attempted.items():
+                for archive_id, info in _fl_attempted.items():
                     if archive_id not in _fl_downloaded:
-                        fh.write(f"{archive_id} {url}\n")
+                        track_url = info["url"]
+                        name = " - ".join(filter(None, [info["uploader"], info["title"]])) or archive_id
+                        error = _fl_errors.get(archive_id, "")
+
+                        if "HTTP Error 404" in error:
+                            track_id = archive_id.split()[-1]
+                            policy = _sc_track_policy(track_id)
+                            if policy == "SNIP":
+                                tag = "[GO+]     "
+                                error_line = ""
+                            elif policy == "BLOCK":
+                                tag = "[BLOCKED] "
+                                error_line = ""
+                            elif policy == "MONETIZE":
+                                tag = "[MONETIZE]"
+                                error_line = ""
+                            else:
+                                tag = "[FAIL]    "
+                                error_line = f"       → policy={policy!r} — {error.strip()[:160]}\n" if policy else f"       → {error.strip()[:200]}\n"
+                        else:
+                            tag = "[FAIL]    "
+                            error_line = f"       → {error.strip()[:200]}\n" if error else ""
+
+                        fh.write(f"{tag} {name}\n")
+                        fh.write(f"         {track_url}\n")
+                        if tag == "[FAIL]   " and error_line:
+                            fh.write(error_line)
+                        fh.write("\n")
 
 
 if __name__ == "__main__":

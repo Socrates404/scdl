@@ -1,19 +1,24 @@
 import errno
+import logging
 from functools import partial
 from pathlib import Path
 
 from yt_dlp import YoutubeDL
-from yt_dlp.utils import locked_file
+from yt_dlp.utils import locked_file, sanitize_filename
+
+logger = logging.getLogger(__name__)
 
 
 class SyncDownloadHelper:
     def __init__(self, scdl_args, ydl: YoutubeDL):
         self._ydl = ydl
+        self._scdl_args = scdl_args
         self._enabled = bool(scdl_args.get("sync"))
         self._sync_file = scdl_args.get("sync")
         self._all_files: dict[str, Path] = {}
         self._downloaded: set[str] = set()
         self._attempted: dict[str, str] = {}  # archive_id -> track URL
+        self._playlist_title: str | None = None
         self._init()
 
     def _init(self):
@@ -51,6 +56,8 @@ class SyncDownloadHelper:
         def _match_entry(ydl, info_dict, incomplete=False, silent=False):
             archive_id = ydl._make_archive_id(info_dict)
             self._downloaded.add(archive_id)
+            if self._playlist_title is None and info_dict.get("playlist"):
+                self._playlist_title = info_dict["playlist"]
             result = old_match_entry(info_dict, incomplete, silent)
             # result is None → track passed all filters and is not in archive → being attempted.
             # Called twice per track (incomplete=True then incomplete=False); overwrite so the
@@ -67,9 +74,54 @@ class SyncDownloadHelper:
 
         self._ydl._match_entry = partial(_match_entry, self._ydl)
 
+    def _check_playlist_rename(self) -> None:
+        """If the playlist was renamed, move files from the old folder to the new one and update archive paths."""
+        if not self._all_files or not self._playlist_title:
+            return
+        if self._scdl_args.get("no_playlist_folder"):
+            return
+
+        base = Path(self._scdl_args["path"])
+        new_folder_name = sanitize_filename(self._playlist_title, restricted=False)
+        if not new_folder_name:
+            return
+        new_folder = base / new_folder_name
+
+        # Collect unique old folders from archive paths (normally just one)
+        old_folders: set[Path] = set()
+        for path in self._all_files.values():
+            p = Path(path)
+            if p.parent != base:
+                old_folders.add(p.parent)
+
+        moved: dict[Path, Path] = {}  # old_folder -> new_folder (for path rewriting)
+        for old_folder in old_folders:
+            if old_folder == new_folder or not old_folder.exists():
+                continue
+            logger.info(f"[scdl] Playlist renamed: {old_folder.name!r} → {new_folder_name!r}, moving files…")
+            new_folder.mkdir(parents=True, exist_ok=True)
+            for src in sorted(old_folder.iterdir()):
+                dst = new_folder / src.name
+                if not dst.exists():
+                    src.rename(dst)
+                    logger.info(f"[scdl]   moved {src.name}")
+            try:
+                old_folder.rmdir()
+            except OSError:
+                pass
+            moved[old_folder] = new_folder
+
+        if moved:
+            self._all_files = {
+                k: str(moved[Path(v).parent] / Path(v).name) if Path(v).parent in moved else v
+                for k, v in self._all_files.items()
+            }
+
     def post_download(self):
         if not self._enabled:
             return
+
+        self._check_playlist_rename()
 
         # rename files for tracks no longer in the playlist
         to_unsync = {key: self._all_files[key] for key in (set(self._all_files.keys()) - self._downloaded)}
