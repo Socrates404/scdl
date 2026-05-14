@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Sync all YouTube playlists listed in yt-playlists.md."""
+
 import argparse
 import random
 import subprocess
@@ -6,39 +8,52 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
-PLAYLIST_FILE = Path(__file__).parent / "playlists-list.md"
-ARCHIVE_DIR = Path(__file__).parent / "archive_trackers"
-RATE_LIMIT_COOLDOWN = 120  # seconds to wait after detecting a rate-limit burst
-RETRY_DELAY = 30           # seconds between retries
+PLAYLIST_FILE = Path(__file__).parent / "yt-playlists.md"
+ARCHIVE_DIR = Path(__file__).parent / "archive_trackers" / "yt"
+YTDL_SCRIPT = Path(__file__).parent / "ytdl.py"
+_CFG_FILE = Path(__file__).with_name("ytdl.cfg")
+RATE_LIMIT_COOLDOWN = 120
+RETRY_DELAY = 30
+
+
+def _load_config_cookies() -> str | None:
+    import configparser
+    cfg = configparser.RawConfigParser()
+    cfg.read(_CFG_FILE, encoding="utf-8")
+    return cfg.get("ytdl", "cookies_from_browser", fallback=None) or None
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Sync all playlists in playlists-list.md")
-    parser.add_argument(
-        "--delay",
-        type=float,
-        default=8.0,
-        metavar="SECONDS",
-        help="Base delay between playlists (default: 8s, actual = delay ± 50%% jitter)",
-    )
-    parser.add_argument(
-        "--max-errors",
-        type=int,
-        default=5,
-        metavar="N",
-        help="Abort a playlist after N consecutive track errors (rate-limit guard, default: 5)",
-    )
-    return parser.parse_args()
+    cfg_cookies = _load_config_cookies()
+    p = argparse.ArgumentParser(description="Sync all YouTube playlists in yt-playlists.md")
+    p.add_argument("--delay", type=float, default=8.0, metavar="SECONDS",
+                   help="Base delay between playlists (default: 8s, actual = delay ± 50%% jitter)")
+    p.add_argument("--max-errors", type=int, default=5, metavar="N",
+                   help="Abort a playlist after N consecutive errors (default: 5)")
+    p.add_argument("--cookies-from-browser", metavar="BROWSER[:PROFILE]", dest="cookies_from_browser",
+                   default=cfg_cookies,
+                   help="Browser/profile for cookies forwarded to ytdl.py (overrides ytdl.cfg)")
+    p.add_argument("--cookies", metavar="FILE", help="Netscape cookies.txt forwarded to ytdl.py")
+    return p.parse_args()
+
+
+def _archive_name(url: str) -> str:
+    parsed = urlparse(url)
+    qs = parse_qs(parsed.query)
+    if "list" in qs:
+        return qs["list"][0]
+    path = parsed.path.strip("/")
+    parts = [p for p in path.split("/") if p and p not in ("videos", "playlist", "watch", "shorts")]
+    return "_".join(parts).lstrip("@") or "unknown"
 
 
 def archive_path(url: str) -> Path:
-    """Mirrors scdl's archive filename derivation from a playlist URL."""
-    url_path = urlparse(url).path.strip("/")
-    parts = [p for p in url_path.split("/") if p != "sets"]
-    archive_name = "_".join(parts) if parts else "unknown"
-    return ARCHIVE_DIR / f"{archive_name}.txt"
+    id_ = _archive_name(url)
+    for f in ARCHIVE_DIR.glob(f"*_{id_}.txt"):
+        return f
+    return ARCHIVE_DIR / f"{id_}.txt"
 
 
 def is_empty(path: Path) -> bool:
@@ -55,20 +70,10 @@ def sort_urls(urls: list[str]) -> list[str]:
     return empty + populated
 
 
-YT_DLP_ARGS = " ".join([
-    "--sleep-requests 1",       # 1s between API calls → stays under 600 req/10min
-    "--extractor-retries 5",    # retry up to 5× on 429
-    "--retry-sleep extractor:60",  # wait 60s between retries (lets the window clear)
-])
-
-
-def run_scdl(url: str, max_errors: int) -> tuple[bool, bool, list[str]]:
-    """
-    Run scdl --sync for a URL.
-    Returns (success, was_aborted, error_lines).
-    """
+def run_ytdl(url: str, max_errors: int, extra_args: list[str]) -> tuple[bool, bool, list[str]]:
+    cmd = [sys.executable, str(YTDL_SCRIPT), "-l", url, "--sync"] + extra_args
     proc = subprocess.Popen(
-        ["scdl", "-l", url, "--sync", "--yt-dlp-args", YT_DLP_ARGS],
+        cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -83,14 +88,13 @@ def run_scdl(url: str, max_errors: int) -> tuple[bool, bool, list[str]]:
 
     for line in proc.stdout:
         print(line, end="", flush=True)
-
         if line.startswith("ERROR:"):
             has_error = True
             consecutive_errors += 1
             error_lines.append(line.rstrip())
             if consecutive_errors >= max_errors:
                 print(
-                    f"\n  [sync] {consecutive_errors} consecutive track errors — "
+                    f"\n  [sync] {consecutive_errors} consecutive errors — "
                     f"rate limited. Aborting playlist early.",
                     flush=True,
                 )
@@ -113,8 +117,13 @@ def errors_log_path(url: str) -> Path:
     return archive_path(url).with_suffix(".errors.log")
 
 
-def sync_list(urls: list[str], delay: float, max_errors: int, label: str = "") -> list[str]:
-    """Sync a list of URLs with delay between each. Returns list of failed URLs."""
+def sync_list(
+    urls: list[str],
+    delay: float,
+    max_errors: int,
+    extra_args: list[str],
+    label: str = "",
+) -> list[str]:
     failed = []
     total = len(urls)
 
@@ -122,14 +131,14 @@ def sync_list(urls: list[str], delay: float, max_errors: int, label: str = "") -
         prefix = f"{label}[{i}/{total}]" if label else f"[{i}/{total}]"
         print(f"{prefix} {url}")
 
-        ok, aborted, error_lines = run_scdl(url, max_errors)
+        ok, aborted, error_lines = run_ytdl(url, max_errors, extra_args)
 
         if not ok:
             failed.append(url)
 
         if error_lines:
             log = errors_log_path(url)
-            log.parent.mkdir(exist_ok=True)
+            log.parent.mkdir(parents=True, exist_ok=True)
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             with log.open("a", encoding="utf-8") as f:
                 f.write(f"\n--- {timestamp}  {url} ---\n")
@@ -140,10 +149,7 @@ def sync_list(urls: list[str], delay: float, max_errors: int, label: str = "") -
 
         if i < total:
             if aborted:
-                print(
-                    f"  [sync] Rate limit detected — cooling down for {RATE_LIMIT_COOLDOWN}s "
-                    f"before next playlist...\n"
-                )
+                print(f"  [sync] Rate limit — cooling down {RATE_LIMIT_COOLDOWN}s before next playlist...\n")
                 time.sleep(RATE_LIMIT_COOLDOWN)
             elif delay > 0:
                 actual = delay * random.uniform(0.5, 1.5)
@@ -154,8 +160,22 @@ def sync_list(urls: list[str], delay: float, max_errors: int, label: str = "") -
     return failed
 
 
+def _print_error_log_summary(urls: list[str]) -> None:
+    logs = [errors_log_path(url) for url in urls if errors_log_path(url).exists()]
+    if not logs:
+        return
+    print(f"\n{len(logs)} playlist(s) have error logs:")
+    for log in logs:
+        print(f"  {log}")
+
+
 def main():
     args = parse_args()
+
+    if not PLAYLIST_FILE.exists():
+        print(f"No playlist file found at {PLAYLIST_FILE}")
+        print("Create yt-playlists.md with one YouTube URL per line.")
+        sys.exit(1)
 
     raw_urls = [
         line.strip()
@@ -164,30 +184,35 @@ def main():
     ]
 
     if not raw_urls:
-        print("No URLs found in playlists-list.md")
+        print("No URLs found in yt-playlists.md")
         sys.exit(1)
 
     urls = sort_urls(raw_urls)
 
+    extra_args: list[str] = []
+    if args.cookies:
+        extra_args += ["--cookies", args.cookies]
+    elif args.cookies_from_browser:
+        extra_args += ["--cookies-from-browser", args.cookies_from_browser]
+
     empty_count = sum(1 for u in urls if is_empty(archive_path(u)))
     print(
-        f"Syncing {len(urls)} playlists "
-        f"({empty_count} empty/new first, then {len(urls) - empty_count} already-populated, "
-        f"both groups shuffled).\n"
+        f"Syncing {len(urls)} YouTube playlists "
+        f"({empty_count} new first, then {len(urls) - empty_count} existing, both shuffled).\n"
         f"Delay: {args.delay}s ± 50% jitter | max-errors: {args.max_errors}\n"
     )
 
-    failed = sync_list(urls, args.delay, args.max_errors)
+    failed = sync_list(urls, args.delay, args.max_errors, extra_args)
 
     if not failed:
         print(f"Done. All {len(urls)} playlists synced successfully.")
         _print_error_log_summary(urls)
         return
 
-    print(f"\n{len(failed)} playlist(s) failed. Waiting 60s before retrying...\n")
+    print(f"\n{len(failed)} playlist(s) failed. Waiting 60s before retry...\n")
     time.sleep(60)
 
-    still_failed = sync_list(failed, delay=RETRY_DELAY, max_errors=args.max_errors, label="RETRY ")
+    still_failed = sync_list(failed, RETRY_DELAY, args.max_errors, extra_args, label="RETRY ")
 
     if still_failed:
         print(f"\nDone. {len(still_failed)} playlist(s) failed after retry:")
@@ -198,15 +223,6 @@ def main():
     else:
         print(f"\nDone. All playlists synced successfully (some needed a retry).")
         _print_error_log_summary(urls)
-
-
-def _print_error_log_summary(urls: list[str]) -> None:
-    logs_with_errors = [errors_log_path(url) for url in urls if errors_log_path(url).exists()]
-    if not logs_with_errors:
-        return
-    print(f"\n{len(logs_with_errors)} playlist(s) have error logs:")
-    for log in logs_with_errors:
-        print(f"  {log}")
 
 
 if __name__ == "__main__":

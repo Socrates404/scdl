@@ -17,6 +17,7 @@ class SyncDownloadHelper:
         self._sync_file = scdl_args.get("sync")
         self._all_files: dict[str, Path] = {}
         self._downloaded: set[str] = set()
+        self._preexisting: set[str] = set()  # IDs loaded from archive before this run
         self._attempted: dict[str, str] = {}  # archive_id -> track URL
         self._playlist_title: str | None = None
         self._init()
@@ -30,7 +31,9 @@ class SyncDownloadHelper:
             if d["status"] != "finished":
                 return
             info = d["info_dict"]
-            id_ = f"soundcloud {info['id']}"
+            id_ = self._ydl._make_archive_id(info)
+            if id_ is None:
+                return
             self._downloaded.add(id_)
             self._all_files[id_] = d["filename"]
 
@@ -44,8 +47,10 @@ class SyncDownloadHelper:
                     if not line:
                         continue
                     ie, id_, filename = line.split(maxsplit=2)
-                    self._ydl.archive.add(f"{ie} {id_}")
-                    self._all_files[f"{ie} {id_}"] = Path(filename)
+                    key = f"{ie} {id_}"
+                    self._ydl.archive.add(key)
+                    self._all_files[key] = Path(filename)
+                    self._preexisting.add(key)
         except OSError as ioe:
             if ioe.errno != errno.ENOENT:
                 raise
@@ -123,8 +128,20 @@ class SyncDownloadHelper:
 
         self._check_playlist_rename()
 
+        # When -o (offset) is active, yt-dlp never evaluates tracks before the offset
+        # position, so they never appear in self._downloaded. Don't treat them as removed
+        # from the playlist — preserve them in the archive as-is.
+        offset = self._scdl_args.get("o")
+        if offset:
+            not_evaluated = self._preexisting - self._downloaded
+        else:
+            not_evaluated = set()
+
         # rename files for tracks no longer in the playlist
-        to_unsync = {key: self._all_files[key] for key in (set(self._all_files.keys()) - self._downloaded)}
+        to_unsync = {
+            key: self._all_files[key]
+            for key in (set(self._all_files.keys()) - self._downloaded - not_evaluated)
+        }
         for filepath in to_unsync.values():
             filepath = Path(filepath)
             if filepath.exists() and not filepath.name.startswith("[unsync] "):
@@ -132,7 +149,7 @@ class SyncDownloadHelper:
 
         with locked_file(self._sync_file, "w", encoding="utf-8") as archive_file:
             for k, v in self._all_files.items():
-                if k in self._downloaded:
+                if k in self._downloaded or k in not_evaluated:
                     archive_file.write(f"{k} {v}\n")
 
         failed_file = Path(self._sync_file).with_suffix(".failed")

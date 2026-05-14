@@ -12,9 +12,63 @@ pipx upgrade scdl
 
 # Commands to run weekly
 ```
-python sync_playlists.py --delay 15
+python sync_sc_playlists.py --delay 15
 python cleanup_short_tracks.py --delete
+python sync_yt_playlists.py --delay 15
 ```
+
+---
+
+## YouTube syncer (ytdl.py)
+
+Downloads YouTube playlists as 256kbps m4a with embedded metadata/thumbnail.
+Files land in `playlists\yt\<playlist name>\`. SoundCloud files land in `playlists\sc\`.
+Archives and trackers are in `archive_trackers/`.
+
+### Download one playlist
+
+```
+python ytdl.py -l https://www.youtube.com/playlist?list=PLxxxxx --sync
+```
+
+### Sync all YouTube playlists at once
+
+```
+python sync_yt_playlists.py             # 8s jittered delay between playlists
+python sync_yt_playlists.py --delay 15  # slower, if hitting 429s
+```
+
+Playlist URLs go in `yt-playlists.md` (one per line).
+
+### Authentication — close LibreWolf before syncing
+
+yt-dlp reads LibreWolf cookies **once at startup**. If LibreWolf is open and browsing,
+YouTube rotates the session cookies mid-download and invalidates them (~item 150+ on large playlists).
+
+**Workflow:**
+
+1. Open LibreWolf → log into YouTube (refresh session)
+2. **Close LibreWolf completely**
+3. Run the sync
+
+### Resume from a specific item (-o)
+
+If a sync was interrupted mid-playlist and you know the first 122 items are already done,
+skip straight to item 123 — no archive re-check, pure skip:
+
+```sh
+python ytdl.py -l URL --sync -o 123
+```
+
+### Archive files in archive_trackers/
+
+| File | Content |
+| --- | --- |
+| `<playlist_id>.txt` | sync archive (tracks already downloaded + file paths) |
+| `<playlist_id>.failed` | tracks that failed (archive_id + URL, one per line) |
+| `<playlist_id>.errors.log` | raw error output per run |
+
+Removed-from-playlist tracks are renamed with `[unsync]` prefix (same as scdl).
 
 
 
@@ -51,9 +105,9 @@ scdl -l https://soundcloud.com/pandadub/sets/the-lost-ship --sync
 
 # Sync all playlists at once (may fail because of rate limit, individual playlist sync is suggested)
 
-python sync_playlists.py             # 8s jittered delay between playlists (safe default)
-python sync_playlists.py --delay 15  # slower, if still hitting 403s
-python sync_playlists.py --delay 0   # no delay (risky, may 403)
+python sync_sc_playlists.py             # 8s jittered delay between playlists (safe default)
+python sync_sc_playlists.py --delay 15  # slower, if still hitting 403s
+python sync_sc_playlists.py --delay 0   # no delay (risky, may 403)
 
 
 
