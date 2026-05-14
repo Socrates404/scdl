@@ -10,6 +10,13 @@ pipx upgrade scdl
 
 ```
 
+# Commands to run weekly
+```
+python sync_playlists.py --delay 15
+python cleanup_short_tracks.py --delete
+```
+
+
 
 ## GO+ / restricted tracks
 
