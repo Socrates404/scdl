@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
-PLAYLIST_FILE = Path(__file__).parent / "playlists-list.md"
+PLAYLIST_FILE = Path(__file__).parent / "1 MY SONG LIBRARY" / "sc-playlists-list.md"
 ARCHIVE_DIR = Path(__file__).parent / "archive_trackers" / "sc"
 SC_PLAYLIST_DIR = Path(__file__).parent / "playlists" / "sc"
 RATE_LIMIT_COOLDOWN = 120  # seconds to wait after detecting a rate-limit burst
@@ -56,6 +56,10 @@ def sort_urls(urls: list[str]) -> list[str]:
     return empty + populated
 
 
+# ---------------------------------------------------------------------------
+# scdl runner
+# ---------------------------------------------------------------------------
+
 YT_DLP_ARGS = " ".join([
     "--sleep-requests 1",       # 1s between API calls → stays under 600 req/10min
     "--extractor-retries 5",    # retry up to 5× on 429
@@ -69,7 +73,8 @@ def run_scdl(url: str, max_errors: int) -> tuple[bool, bool, list[str]]:
     Returns (success, was_aborted, error_lines).
     """
     proc = subprocess.Popen(
-        ["scdl", "-l", url, "--sync", "--path", str(SC_PLAYLIST_DIR), "--yt-dlp-args", YT_DLP_ARGS],
+        ["scdl", "-l", url, "--sync", "--path", str(SC_PLAYLIST_DIR),
+         "--yt-dlp-args", YT_DLP_ARGS],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,

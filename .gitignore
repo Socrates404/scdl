@@ -7,6 +7,7 @@ __pycache__/
 *.opus
 *.m4a
 *.flac
+*.aif
 .vscode
 .venv
 .env
