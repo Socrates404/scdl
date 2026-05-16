@@ -260,8 +260,8 @@ def _main() -> None:
     url_path = urlparse(arguments["-l"]).path.strip("/")
     parts = [p for p in url_path.split("/") if p != "sets"]
     archive_name = "_".join(parts) if parts else "unknown"
-    archive_dir = Path.cwd() / "archive_trackers"
-    archive_dir.mkdir(exist_ok=True)
+    archive_dir = Path.cwd() / "archive_trackers" / "sc"
+    archive_dir.mkdir(parents=True, exist_ok=True)
 
     if arguments["--sync"]:
         arguments["--sync"] = str(archive_dir / f"{archive_name}.txt")

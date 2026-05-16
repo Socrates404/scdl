@@ -4,7 +4,6 @@ import random
 import subprocess
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -115,10 +114,6 @@ def run_scdl(url: str, max_errors: int) -> tuple[bool, bool, list[str]]:
     return success, aborted, error_lines
 
 
-def errors_log_path(url: str) -> Path:
-    return archive_path(url).with_suffix(".errors.log")
-
-
 def sync_list(urls: list[str], delay: float, max_errors: int, label: str = "") -> list[str]:
     """Sync a list of URLs with delay between each. Returns list of failed URLs."""
     failed = []
@@ -132,15 +127,6 @@ def sync_list(urls: list[str], delay: float, max_errors: int, label: str = "") -
 
         if not ok:
             failed.append(url)
-
-        if error_lines:
-            log = errors_log_path(url)
-            log.parent.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            with log.open("a", encoding="utf-8") as f:
-                f.write(f"\n--- {timestamp}  {url} ---\n")
-                for line in error_lines:
-                    f.write(line + "\n")
 
         print()
 
@@ -187,7 +173,6 @@ def main():
 
     if not failed:
         print(f"Done. All {len(urls)} playlists synced successfully.")
-        _print_error_log_summary(urls)
         return
 
     print(f"\n{len(failed)} playlist(s) failed. Waiting 60s before retrying...\n")
@@ -199,20 +184,9 @@ def main():
         print(f"\nDone. {len(still_failed)} playlist(s) failed after retry:")
         for url in still_failed:
             print(f"  {url}")
-        _print_error_log_summary(urls)
         sys.exit(1)
     else:
         print(f"\nDone. All playlists synced successfully (some needed a retry).")
-        _print_error_log_summary(urls)
-
-
-def _print_error_log_summary(urls: list[str]) -> None:
-    logs_with_errors = [errors_log_path(url) for url in urls if errors_log_path(url).exists()]
-    if not logs_with_errors:
-        return
-    print(f"\n{len(logs_with_errors)} playlist(s) have error logs:")
-    for log in logs_with_errors:
-        print(f"  {log}")
 
 
 if __name__ == "__main__":
