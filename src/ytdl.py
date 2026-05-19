@@ -29,8 +29,9 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 logger.addHandler(logging.StreamHandler())
 
-ARCHIVE_DIR = Path(__file__).parent / "archive_trackers" / "yt"
-_CFG_FILE = Path(__file__).with_name("ytdl.cfg")
+_ROOT = Path(__file__).parent.parent
+ARCHIVE_DIR = _ROOT / "archive_trackers" / "yt"
+_CFG_FILE = _ROOT / "ytdl.cfg"
 
 
 def _load_config() -> configparser.RawConfigParser:
@@ -145,7 +146,7 @@ def main() -> None:
     if cfg_path_raw:
         cfg_path = Path(cfg_path_raw)
         if not cfg_path.is_absolute():
-            cfg_path = Path(__file__).parent / cfg_path
+            cfg_path = _ROOT / cfg_path
         cfg_path_str = str(cfg_path)
     else:
         cfg_path_str = "."

@@ -7,9 +7,10 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 
-PLAYLIST_FILE = Path(__file__).parent / "1 MY SONG LIBRARY" / "sc-playlists-list.md"
-ARCHIVE_DIR = Path(__file__).parent / "archive_trackers" / "sc"
-SC_PLAYLIST_DIR = Path(__file__).parent / "playlists" / "sc"
+_ROOT = Path(__file__).parent.parent
+PLAYLIST_FILE = Path(__file__).parent / "sc-playlists-list.md"
+ARCHIVE_DIR = _ROOT / "archive_trackers" / "sc"
+SC_PLAYLIST_DIR = _ROOT / "playlists" / "sc"
 RATE_LIMIT_COOLDOWN = 120  # seconds to wait after detecting a rate-limit burst
 RETRY_DELAY = 30           # seconds between retries
 

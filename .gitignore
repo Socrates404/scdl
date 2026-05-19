@@ -8,6 +8,8 @@ __pycache__/
 *.m4a
 *.flac
 *.aif
+*.wav
+*.zip
 .vscode
 .venv
 .env
@@ -20,8 +22,7 @@ archive_trackers/
 playlists-list.md
 yt-playlists.md
 ytdl.cfg
+best-sample-sources.md
+sc-playlists-list.md
+Songs to download manually.txt
 Unavailable songs soundcloud.txt
-MY SONG LIBRARY/
-*.wav
-1 MY SONG LIBRARY/best-sample-sources.md
-1 MY SONG LIBRARY/sc-playlists-list.md

@@ -16,8 +16,8 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 INDEX_RE = re.compile(r"^(\d+)\. ")
 UNSYNC_PREFIX = "[unsync] "
 
-SC_PLAYLIST_DIR = Path(__file__).parent / "playlists" / "sc"
-ARCHIVE_DIR = Path(__file__).parent / "archive_trackers" / "sc"
+SC_PLAYLIST_DIR = Path(__file__).parent.parent / "playlists" / "sc"
+ARCHIVE_DIR = Path(__file__).parent.parent / "archive_trackers" / "sc"
 
 
 def _strip_index(name: str) -> str | None:

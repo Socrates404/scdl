@@ -10,10 +10,11 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
+_ROOT = Path(__file__).parent.parent
 PLAYLIST_FILE = Path(__file__).parent / "yt-playlists.md"
-ARCHIVE_DIR = Path(__file__).parent / "archive_trackers" / "yt"
+ARCHIVE_DIR = _ROOT / "archive_trackers" / "yt"
 YTDL_SCRIPT = Path(__file__).parent / "ytdl.py"
-_CFG_FILE = Path(__file__).with_name("ytdl.cfg")
+_CFG_FILE = _ROOT / "ytdl.cfg"
 RATE_LIMIT_COOLDOWN = 120
 RETRY_DELAY = 30
 

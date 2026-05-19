@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a local fork/customization of [scdl-org/scdl](https://github.com/scdl-org/scdl), a SoundCloud downloader that wraps `yt-dlp`. The upstream README describes the package well. The local additions are:
 
-- `sync_sc_playlists.py` — a standalone bulk-sync script for managing many playlists at once
+- `src/sync_sc_playlists.py` — a standalone bulk-sync script for managing many playlists at once
 - `scdl/patches/sync_download_archive.py` — custom sync archive management (not in upstream)
 - `scdl/scdl.cfg` — local config (gitignored credentials, local paths)
 
@@ -31,8 +31,8 @@ pytest
 scdl -l <url> --sync
 
 # Sync all playlists from the list file
-python sync_sc_playlists.py
-python sync_sc_playlists.py --delay 5 --max-errors 3
+python src/sync_sc_playlists.py
+python src/sync_sc_playlists.py --delay 5 --max-errors 3
 ```
 
 ## Architecture
@@ -50,8 +50,9 @@ Custom yt-dlp post/pre-processors injected into the `YoutubeDL` instance in `dow
 - `trim_filenames.py` — trims filenames to 240 bytes.
 - `old_archive_ids.py` — backward compat shim for pre-v3 archive IDs.
 
-### `sync_sc_playlists.py`
-Reads playlist URLs from `1 MY SONG LIBRARY/sc-playlists-list.md` (one `https://...` URL per line), then for each URL:
+### `src/sync_sc_playlists.py`
+
+Reads playlist URLs from `src/sc-playlists-list.md` (one `https://...` URL per line), then for each URL:
 1. `heal_all_archives()` — fixes stale archive paths (missing `sc/` layer, digit-padding mismatches) without network access.
 2. `fix_index_shifts()` — runs `yt-dlp --flat-playlist` to fetch current track order from SC, compares to the archive, and renames local files so they match the new indices before scdl runs. This avoids re-downloads when tracks are deleted from a playlist, shifting the indices of remaining tracks.
 3. `run_scdl()` — runs `scdl --sync` as a subprocess, monitors output for consecutive errors (rate-limit guard), and aborts early if needed.
@@ -60,7 +61,7 @@ Reads playlist URLs from `1 MY SONG LIBRARY/sc-playlists-list.md` (one `https://
 ```
 archive_trackers/sc/        # per-playlist archive .txt files (format: "soundcloud <id> <filepath>")
 playlists/sc/               # downloaded audio files, one subfolder per playlist
-1 MY SONG LIBRARY/sc-playlists-list.md  # list of SC playlist URLs to sync
+src/sc-playlists-list.md            # list of SC playlist URLs to sync (gitignored)
 scdl/scdl.cfg               # local config (client_id, auth_token, path, name_format)
 ```
 

@@ -12,9 +12,9 @@ pipx upgrade scdl
 
 # Commands to run weekly
 ```
-python sync_sc_playlists.py --delay 15
-python cleanup_short_tracks.py --delete
-python sync_yt_playlists.py --delay 15
+python src/sync_sc_playlists.py --delay 15
+python src/cleanup_short_tracks.py --delete
+python src/sync_yt_playlists.py --delay 15
 ```
 
 ---
@@ -28,14 +28,14 @@ Archives and trackers are in `archive_trackers/`.
 ### Download one playlist
 
 ```
-python ytdl.py -l https://www.youtube.com/playlist?list=PLxxxxx --sync
+python src/ytdl.py -l https://www.youtube.com/playlist?list=PLxxxxx --sync
 ```
 
 ### Sync all YouTube playlists at once
 
 ```
-python sync_yt_playlists.py             # 8s jittered delay between playlists
-python sync_yt_playlists.py --delay 15  # slower, if hitting 429s
+python src/sync_yt_playlists.py             # 8s jittered delay between playlists
+python src/sync_yt_playlists.py --delay 15  # slower, if hitting 429s
 ```
 
 Playlist URLs go in `yt-playlists.md` (one per line).
@@ -57,7 +57,7 @@ If a sync was interrupted mid-playlist and you know the first 122 items are alre
 skip straight to item 123 — no archive re-check, pure skip:
 
 ```sh
-python ytdl.py -l URL --sync -o 123
+python src/ytdl.py -l URL --sync -o 123
 ```
 
 ### Archive files in archive_trackers/
@@ -105,9 +105,9 @@ scdl -l https://soundcloud.com/pandadub/sets/the-lost-ship --sync
 
 # Sync all playlists at once (may fail because of rate limit, individual playlist sync is suggested)
 
-python sync_sc_playlists.py             # 8s jittered delay between playlists (safe default)
-python sync_sc_playlists.py --delay 15  # slower, if still hitting 403s
-python sync_sc_playlists.py --delay 0   # no delay (risky, may 403)
+python src/sync_sc_playlists.py             # 8s jittered delay between playlists (safe default)
+python src/sync_sc_playlists.py --delay 15  # slower, if still hitting 403s
+python src/sync_sc_playlists.py --delay 0   # no delay (risky, may 403)
 
 
 

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from mutagen import File as MutagenFile
 
-PLAYLIST_DIR = Path(__file__).parent / "playlists"
+PLAYLIST_DIR = Path(__file__).parent.parent / "playlists"
 MAX_DURATION = 30  # seconds — SoundCloud snips are exactly 30s
 AUDIO_EXTENSIONS = {".mp3", ".m4a", ".aac", ".opus", ".flac", ".wav", ".ogg"}
 
