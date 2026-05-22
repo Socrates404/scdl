@@ -11,9 +11,9 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 _ROOT = Path(__file__).parent.parent
-PLAYLIST_FILE = Path(__file__).parent / "yt-playlists.md"
-ARCHIVE_DIR = _ROOT / "archive_trackers" / "yt"
-YTDL_SCRIPT = Path(__file__).parent / "ytdl.py"
+_SRC = Path(__file__).parent
+ARCHIVE_DIR = _ROOT / "archive_trackers" / "yt"  # kept for compat
+YTDL_SCRIPT = _SRC / "ytdl.py"
 _CFG_FILE = _ROOT / "ytdl.cfg"
 RATE_LIMIT_COOLDOWN = 120
 RETRY_DELAY = 30
@@ -28,11 +28,13 @@ def _load_config_cookies() -> str | None:
 
 def parse_args():
     cfg_cookies = _load_config_cookies()
-    p = argparse.ArgumentParser(description="Sync all YouTube playlists in yt-playlists.md")
+    p = argparse.ArgumentParser(description="Sync all YouTube playlists in yt-playlists.md / yt-video-playlists.md")
     p.add_argument("--delay", type=float, default=8.0, metavar="SECONDS",
                    help="Base delay between playlists (default: 8s, actual = delay ± 50%% jitter)")
     p.add_argument("--max-errors", type=int, default=5, metavar="N",
                    help="Abort a playlist after N consecutive errors (default: 5)")
+    p.add_argument("--video", action="store_true",
+                   help="Sync video playlists from yt-video-playlists.md (mp4, best quality)")
     p.add_argument("--cookies-from-browser", metavar="BROWSER[:PROFILE]", dest="cookies_from_browser",
                    default=cfg_cookies,
                    help="Browser/profile for cookies forwarded to ytdl.py (overrides ytdl.cfg)")
@@ -50,22 +52,23 @@ def _archive_name(url: str) -> str:
     return "_".join(parts).lstrip("@") or "unknown"
 
 
-def archive_path(url: str) -> Path:
+def archive_path(url: str, video: bool = False) -> Path:
+    adir = _ROOT / "archive_trackers" / ("yt-video" if video else "yt")
     id_ = _archive_name(url)
-    for f in ARCHIVE_DIR.glob(f"*_{id_}.txt"):
+    for f in adir.glob(f"*_{id_}.txt"):
         return f
-    return ARCHIVE_DIR / f"{id_}.txt"
+    return adir / f"{id_}.txt"
 
 
 def is_empty(path: Path) -> bool:
     return not path.exists() or path.stat().st_size == 0
 
 
-def sort_urls(urls: list[str]) -> list[str]:
+def sort_urls(urls: list[str], video: bool = False) -> list[str]:
     """Empty/missing archives first (both groups shuffled internally)."""
     empty, populated = [], []
     for url in urls:
-        (empty if is_empty(archive_path(url)) else populated).append(url)
+        (empty if is_empty(archive_path(url, video)) else populated).append(url)
     random.shuffle(empty)
     random.shuffle(populated)
     return empty + populated
@@ -114,8 +117,8 @@ def run_ytdl(url: str, max_errors: int, extra_args: list[str]) -> tuple[bool, bo
     return success, aborted, error_lines
 
 
-def errors_log_path(url: str) -> Path:
-    return archive_path(url).with_suffix(".errors.log")
+def errors_log_path(url: str, video: bool = False) -> Path:
+    return archive_path(url, video).with_suffix(".errors.log")
 
 
 def sync_list(
@@ -124,6 +127,7 @@ def sync_list(
     max_errors: int,
     extra_args: list[str],
     label: str = "",
+    video: bool = False,
 ) -> list[str]:
     failed = []
     total = len(urls)
@@ -138,7 +142,7 @@ def sync_list(
             failed.append(url)
 
         if error_lines:
-            log = errors_log_path(url)
+            log = errors_log_path(url, video)
             log.parent.mkdir(parents=True, exist_ok=True)
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             with log.open("a", encoding="utf-8") as f:
@@ -161,8 +165,8 @@ def sync_list(
     return failed
 
 
-def _print_error_log_summary(urls: list[str]) -> None:
-    logs = [errors_log_path(url) for url in urls if errors_log_path(url).exists()]
+def _print_error_log_summary(urls: list[str], video: bool = False) -> None:
+    logs = [errors_log_path(url, video) for url in urls if errors_log_path(url, video).exists()]
     if not logs:
         return
     print(f"\n{len(logs)} playlist(s) have error logs:")
@@ -173,57 +177,63 @@ def _print_error_log_summary(urls: list[str]) -> None:
 def main():
     args = parse_args()
 
-    if not PLAYLIST_FILE.exists():
-        print(f"No playlist file found at {PLAYLIST_FILE}")
-        print("Create yt-playlists.md with one YouTube URL per line.")
+    playlist_file = _SRC / ("yt-video-playlists.md" if args.video else "yt-playlists.md")
+    mode_label = "video" if args.video else "audio"
+
+    if not playlist_file.exists():
+        print(f"No playlist file found at {playlist_file}")
+        fname = "yt-video-playlists.md" if args.video else "yt-playlists.md"
+        print(f"Create {fname} with one YouTube URL per line.")
         sys.exit(1)
 
     raw_urls = [
         line.strip()
-        for line in PLAYLIST_FILE.read_text(encoding="utf-8").splitlines()
+        for line in playlist_file.read_text(encoding="utf-8").splitlines()
         if line.strip().startswith("http")
     ]
 
     if not raw_urls:
-        print("No URLs found in yt-playlists.md")
+        print(f"No URLs found in {playlist_file.name}")
         sys.exit(1)
 
-    urls = sort_urls(raw_urls)
+    urls = sort_urls(raw_urls, args.video)
 
     extra_args: list[str] = []
+    if args.video:
+        extra_args += ["--video"]
     if args.cookies:
         extra_args += ["--cookies", args.cookies]
     elif args.cookies_from_browser:
         extra_args += ["--cookies-from-browser", args.cookies_from_browser]
 
-    empty_count = sum(1 for u in urls if is_empty(archive_path(u)))
+    empty_count = sum(1 for u in urls if is_empty(archive_path(u, args.video)))
     print(
-        f"Syncing {len(urls)} YouTube playlists "
+        f"Syncing {len(urls)} YouTube {mode_label} playlists "
         f"({empty_count} new first, then {len(urls) - empty_count} existing, both shuffled).\n"
         f"Delay: {args.delay}s ± 50% jitter | max-errors: {args.max_errors}\n"
     )
 
-    failed = sync_list(urls, args.delay, args.max_errors, extra_args)
+    failed = sync_list(urls, args.delay, args.max_errors, extra_args, video=args.video)
 
     if not failed:
         print(f"Done. All {len(urls)} playlists synced successfully.")
-        _print_error_log_summary(urls)
+        _print_error_log_summary(urls, args.video)
         return
 
     print(f"\n{len(failed)} playlist(s) failed. Waiting 60s before retry...\n")
     time.sleep(60)
 
-    still_failed = sync_list(failed, RETRY_DELAY, args.max_errors, extra_args, label="RETRY ")
+    still_failed = sync_list(failed, RETRY_DELAY, args.max_errors, extra_args, label="RETRY ", video=args.video)
 
     if still_failed:
         print(f"\nDone. {len(still_failed)} playlist(s) failed after retry:")
         for url in still_failed:
             print(f"  {url}")
-        _print_error_log_summary(urls)
+        _print_error_log_summary(urls, args.video)
         sys.exit(1)
     else:
         print(f"\nDone. All playlists synced successfully (some needed a retry).")
-        _print_error_log_summary(urls)
+        _print_error_log_summary(urls, args.video)
 
 
 if __name__ == "__main__":

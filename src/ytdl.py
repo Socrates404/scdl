@@ -30,8 +30,13 @@ logger.setLevel(logging.INFO)
 logger.addHandler(logging.StreamHandler())
 
 _ROOT = Path(__file__).parent.parent
-ARCHIVE_DIR = _ROOT / "archive_trackers" / "yt"
+_ARCHIVE_BASE = _ROOT / "archive_trackers"
+ARCHIVE_DIR = _ARCHIVE_BASE / "yt"  # kept for external references
 _CFG_FILE = _ROOT / "ytdl.cfg"
+
+
+def _archive_dir(video: bool) -> Path:
+    return _ARCHIVE_BASE / ("yt-video" if video else "yt")
 
 
 def _load_config() -> configparser.RawConfigParser:
@@ -40,11 +45,12 @@ def _load_config() -> configparser.RawConfigParser:
     return cfg
 
 
-def _archive_path(url: str) -> Path:
+def _archive_path(url: str, video: bool = False) -> Path:
+    adir = _archive_dir(video)
     id_ = _archive_name(url)
-    for f in ARCHIVE_DIR.glob(f"*_{id_}.txt"):
+    for f in adir.glob(f"*_{id_}.txt"):
         return f
-    return ARCHIVE_DIR / f"{id_}.txt"
+    return adir / f"{id_}.txt"
 
 
 def _rename_archive_with_title(path: Path, title: str) -> None:
@@ -73,10 +79,12 @@ def _archive_name(url: str) -> str:
 
 
 def download(url: str, args: argparse.Namespace) -> None:
+    video = getattr(args, "video", False)
     base = Path(args.path).resolve()
-    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+    adir = _archive_dir(video)
+    adir.mkdir(parents=True, exist_ok=True)
 
-    sync_file = str(_archive_path(url))
+    sync_file = str(_archive_path(url, video))
 
     scdl_args: dict = {
         "sync": sync_file if args.sync else None,
@@ -89,19 +97,34 @@ def download(url: str, args: argparse.Namespace) -> None:
     else:
         outtmpl = str(base / "%(playlist|)s" / "%(title)s.%(ext)s")
 
-    argv = [
-        "--format", "bestaudio[ext=m4a]/bestaudio/best",
-        "--embed-metadata",
-        "--embed-thumbnail",
-        "--remux-video", "aac>m4a",
-        "--output-na-placeholder", "",
-        "--trim-filenames", "240b",
-        "--sleep-requests", "1",
-        "--extractor-retries", "5",
-        "--retry-sleep", "extractor:60",
-        "--js-runtimes", "node",
-        "--remote-components", "ejs:github",
-    ]
+    if video:
+        argv = [
+            "--format", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best",
+            "--merge-output-format", "mp4",
+            "--embed-metadata",
+            "--embed-thumbnail",
+            "--output-na-placeholder", "",
+            "--trim-filenames", "240b",
+            "--sleep-requests", "1",
+            "--extractor-retries", "5",
+            "--retry-sleep", "extractor:60",
+            "--js-runtimes", "node",
+            "--remote-components", "ejs:github",
+        ]
+    else:
+        argv = [
+            "--format", "bestaudio[ext=m4a]/bestaudio/best",
+            "--embed-metadata",
+            "--embed-thumbnail",
+            "--remux-video", "aac>m4a",
+            "--output-na-placeholder", "",
+            "--trim-filenames", "240b",
+            "--sleep-requests", "1",
+            "--extractor-retries", "5",
+            "--retry-sleep", "extractor:60",
+            "--js-runtimes", "node",
+            "--remote-components", "ejs:github",
+        ]
 
     if args.offset:
         argv += ["--playlist-items", f"{args.offset}:"]
@@ -139,17 +162,32 @@ def download(url: str, args: argparse.Namespace) -> None:
             _rename_archive_with_title(Path(sync_file), sync._playlist_title)
 
 
+def _resolve_cfg_path(raw: str | None, fallback: str) -> str:
+    if raw:
+        p = Path(raw)
+        return str(p if p.is_absolute() else _ROOT / p)
+    return str(_ROOT / fallback)
+
+
 def main() -> None:
     cfg = _load_config()
     cfg_cookies = cfg.get("ytdl", "cookies_from_browser", fallback=None) or None
-    cfg_path_raw = cfg.get("ytdl", "path", fallback=None) or None
-    if cfg_path_raw:
-        cfg_path = Path(cfg_path_raw)
-        if not cfg_path.is_absolute():
-            cfg_path = _ROOT / cfg_path
-        cfg_path_str = str(cfg_path)
+
+    # Pre-parse --video so we can select the right default path before building the full parser.
+    _pre = argparse.ArgumentParser(add_help=False)
+    _pre.add_argument("--video", action="store_true", default=False)
+    _pre_args, _ = _pre.parse_known_args()
+
+    if _pre_args.video:
+        cfg_path_str = _resolve_cfg_path(
+            cfg.get("ytdl", "video_path", fallback=None) or None,
+            "playlists/yt-video",
+        )
     else:
-        cfg_path_str = "."
+        cfg_path_str = _resolve_cfg_path(
+            cfg.get("ytdl", "path", fallback=None) or None,
+            "playlists/yt",
+        )
 
     p = argparse.ArgumentParser(
         description="YouTube playlist/channel syncer built on yt-dlp",
@@ -158,8 +196,10 @@ def main() -> None:
     p.add_argument("-l", required=True, metavar="URL", help="YouTube playlist/channel/video URL")
     p.add_argument("--sync", action="store_true",
                    help="Download new tracks, mark removed ones as [unsync]")
+    p.add_argument("--video", action="store_true",
+                   help="Download best video+audio (mp4) instead of audio-only (m4a)")
     p.add_argument("--path", default=cfg_path_str, metavar="PATH",
-                   help="Download directory (default from ytdl.cfg)")
+                   help="Download directory (default from ytdl.cfg / ytdl.cfg video_path)")
     p.add_argument("-o", "--offset", type=int, metavar="N", default=None,
                    help="Start from item N in the playlist (skips items 1 to N-1)")
     p.add_argument("--no-playlist-folder", action="store_true", dest="no_playlist_folder",

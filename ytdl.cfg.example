@@ -12,9 +12,15 @@
 
 cookies_from_browser =
 
-# Download directory for YouTube playlists.
+# Download directory for YouTube audio playlists (used by ytdl.py and sync_yt_playlists.py).
 # Relative paths are resolved from the project root (where ytdl.py lives).
 # Example:
 # path = playlists\yt
 
 path =
+
+# Download directory for YouTube video playlists (used when --video flag is passed).
+# Example:
+# video_path = playlists\yt-video
+
+video_path =

@@ -1,113 +1,231 @@
-# Soundcloud Music Downloader
+# scdl — SoundCloud & YouTube downloader
 
-## Status of the project
+Local fork of [scdl-org/scdl](https://github.com/scdl-org/scdl), a SoundCloud downloader that wraps `yt-dlp` and syncs with your local files.
+Extended with YouTube audio/video support and bulk playlist sync.
 
-As of version 3, this script is a wrapper around `yt-dlp` with some defaults/patches for backwards compatibility.
-Development is not active and new features will likely not be merged, especially if they can be covered with the
-use of `--yt-dlp-args`. Bug reports/fixes are welcome.
+**Requirements:** Python 3, ffmpeg
 
-## Description
+## Install
 
-This script is able to download music from SoundCloud and set id3tag to the downloaded music.
-Compatible with Windows, OS X, Linux.
-
-## System requirements
-
-* python3
-* ffmpeg
-
-## Installation Instructions
-https://github.com/flyingrub/scdl/wiki/Installation-Instruction
-
-## Configuration
-There is a configuration file left in `~/.config/scdl/scdl.cfg`
-
-## Examples:
-```
-# Download track & repost of the user QUANTA
-scdl -l https://soundcloud.com/quanta-uk -a
-
-# Download likes of the user Blastoyz
-scdl -l https://soundcloud.com/kobiblastoyz -f
-
-# Download one track
-scdl -l https://soundcloud.com/jumpstreetpsy/low-extender
-
-# Download one playlist
-scdl -l https://soundcloud.com/pandadub/sets/the-lost-ship
-
-# Download only new tracks from a playlist
-scdl -l https://soundcloud.com/pandadub/sets/the-lost-ship --download-archive archive.txt -c
-
-# Sync playlist
-scdl -l https://soundcloud.com/pandadub/sets/the-lost-ship --sync archive.txt
-
-# Download your likes (with authentification token)
-scdl me -f
+```powershell
+uv sync --dev
+.\.venv\Scripts\Activate.ps1
 ```
 
-## Options:
+```python
+
+python -m venv .venv
+. .\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pipx install scdl
+pipx upgrade scdl
 ```
--h --help                       Show this screen
---version                       Show version
+
+---
+
+## Weekly sync commands
+
+```sh
+python src/sync_sc_playlists.py --delay 15    # sync all SoundCloud playlists
+python src/cleanup_short_tracks.py --delete   # purge any GO+ 30s snips
+python src/sync_yt_playlists.py --delay 15    # sync all YouTube audio playlists
+```
+
+---
+
+## SoundCloud
+
+```sh
+# Sync one playlist (downloads new, marks removed as [unsync]) (make sure to use the "--sync" flag!)
+scdl -l https://soundcloud.com/artist/sets/playlist-name --sync
+
+# Sync all playlists listed in src/sc-playlists-list.md
+python src/sync_sc_playlists.py
+python src/sync_sc_playlists.py --delay 15      # slower, if hitting 403s
+python src/sync_sc_playlists.py --max-errors 3  # abort earlier on rate limits
+
+# One-off downloads
+scdl -l https://soundcloud.com/artist/track-name           # single track
+scdl -l https://soundcloud.com/artist/sets/playlist-name   # full playlist
+scdl -l https://soundcloud.com/artist -a                   # all tracks + reposts
+scdl -l https://soundcloud.com/artist -f                   # likes
+scdl -l https://soundcloud.com/artist -t                   # uploads only
+scdl me -f                                                 # your own likes (requires auth)
+```
+
+Archives auto-named and stored in `archive_trackers/sc/`.
+
+### scdl options
+
+```text
 -l [url]                        URL can be track/playlist/user
--s [search_query]               Search for a track/playlist/user and use the first result
-        -a                              Download all tracks of user (including reposts)
-        -t                              Download all uploads of a user (no reposts)
+-a                              Download all tracks of user (including reposts)
+-p                              Download all playlists of a user
+-o [offset]                     Start from item N in playlist (starting with 1)
+--force-metadata                Re-embed metadata on already-downloaded files
+--sync                          Auto-managed archive: downloads new, marks removed as [unsync]
+
+
+-t                              Download all uploads of a user (no reposts)
 -f                              Download all favorites (likes) of a user
 -C                              Download all tracks commented on by a user
-        -p                              Download all playlists of a user
+-s [search_query]               Search and use the first result
 -r                              Download all reposts of user
 -c                              Continue if a downloaded file already exists
-        --force-metadata                This will set metadata on already downloaded track
-        -o [offset]                     Start downloading a playlist from the [offset]th track (starting with 1)
---addtimestamp                  Add track creation timestamp to filename,
-                                which allows for chronological sorting
-                                (Deprecated. Use --name-format instead.)
---addtofile                     Add artist to filename if missing
---debug                         Set log level to DEBUG
---error                         Set log level to ERROR
---download-archive [file]       Keep track of track IDs in an archive file,
-                                and skip already-downloaded files
---extract-artist                Set artist tag from title instead of username
---hide-progress                 Hide the wget progress bar
---hidewarnings                  Hide Warnings. (use with precaution)
---max-size [max-size]           Skip tracks larger than size (k/m/g)
---min-size [min-size]           Skip tracks smaller than size (k/m/g)
---no-playlist-folder            Download playlist tracks into main directory,
-                                instead of making a playlist subfolder
+--download-archive [file]       Keep track of track IDs and skip already-downloaded files
+--flac                          Convert lossless originals to FLAC
+--original-art                  Download full-res artwork instead of 500×500 JPEG
+--original-name                 Keep original filename on original-quality downloads
+--no-original                   Only download mp3/m4a/opus, skip original files
+--only-original                 Only download tracks with an original file available
+--opus                          Prefer opus streams over mp3
 --onlymp3                       Download only mp3 files
---path [path]                   Use a custom path for downloaded files
---remove                        Remove any files not downloaded from execution
---sync [file]                   Compares an archive file to a playlist and downloads/removes any changed tracks
---flac                          Convert original files to .flac. Only works if the original file is lossless quality
---no-album-tag                  On some player track get the same cover art if from the same album, this prevent it
-        --original-art                  Download original cover art, not just 500x500 JPEG
---original-name                 Do not change name of original file downloads
---original-metadata             Do not change metadata of original file downloads
---no-original                   Do not download original file; only mp3, m4a, or opus
---only-original                 Only download songs with original file available
---name-format [format]          Specify the downloaded file name format. Use "-" to download to stdout
---playlist-name-format [format] Specify the downloaded file name format, if it is being downloaded as part of a playlist
---client-id [id]                Specify the client_id to use
---auth-token [token]            Specify the auth token to use
---overwrite                     Overwrite file if it already exists
---strict-playlist               Abort playlist downloading if one track fails to download
---add-description               Adds the description to a seperate txt file (can be read by some players)
---no-playlist                   Skip downloading playlists
---opus                          Prefer downloading opus streams over mp3 streams
---yt-dlp-args                   String with custom args to forward to yt-dlp
+--name-format [format]          Custom filename format (use "-" to pipe to stdout)
+--playlist-name-format [format] Custom filename format for playlist tracks
+--overwrite                     Overwrite existing files
+--strict-playlist               Abort if one track in a playlist fails
+--no-playlist                   Skip playlist entries, download only tracks
+--add-description               Save track description to a .txt sidecar file
+--path [path]                   Custom download directory
+--min-size [size]               Skip tracks smaller than size (k/m/g)
+--max-size [size]               Skip tracks larger than size (k/m/g)
+--no-album-tag                  Prevent shared cover art across tracks from same album
+--extract-artist                Set artist tag from title (e.g. "Artist - Title" format)
+--yt-dlp-args [argstring]       Forward extra args to yt-dlp
+--client-id [id]                Override the SoundCloud client_id
+--auth-token [token]            Override the auth token
+--debug                         Verbose logging
 ```
 
+---
 
-## Features
-* Automatically detect the type of link provided
-* Download all songs from a user
-* Download all songs and reposts from a user
-* Download all songs from one playlist
-* Download all songs from all playlists from a user
-* Download all songs from a user's favorites
-* Download only new tracks from a list (playlist, favorites, etc.)
-* Sync Playlist
-* Set the tags with mutagen (Title / Artist / Album / Artwork)
-* Create playlist files when downloading a playlist
+## YouTube — Audio (m4a, 256 kbps)
+
+```sh
+# Sync one playlist
+python src/ytdl.py -l https://www.youtube.com/playlist?list=PLxxx --sync
+
+# Resume from item N (e.g. after an interruption — skips items 1 to N-1)
+python src/ytdl.py -l URL --sync -o 123
+
+# Sync all playlists listed in src/yt-playlists.md
+python src/sync_yt_playlists.py
+python src/sync_yt_playlists.py --delay 15
+```
+
+Files land in `playlists/yt/<playlist name>/`. Archives in `archive_trackers/yt/`.
+
+## YouTube — Video (mp4, best quality)
+
+```sh
+# Sync one playlist
+python src/ytdl.py -l https://www.youtube.com/playlist?list=PLxxx --sync --video
+
+# Sync all playlists listed in src/yt-video-playlists.md
+python src/sync_yt_playlists.py --video
+python src/sync_yt_playlists.py --video --delay 15
+```
+
+Files land in `playlists/yt-video/<playlist name>/`. Archives in `archive_trackers/yt-video/`.
+
+### Archive files (YouTube)
+
+| File | Content |
+| --- | --- |
+| `<playlist_id>.txt` | sync archive (tracks downloaded + file paths) |
+| `<playlist_id>.failed` | tracks that failed (archive_id + URL) |
+| `<playlist_id>.errors.log` | raw error output, appended per run |
+
+Removed-from-playlist tracks are renamed with `[unsync]` prefix (same as SoundCloud).
+
+---
+
+## Authentication
+
+### SoundCloud auth
+
+Find your OAuth token: log into SoundCloud → F12 → Storage → Cookies → `oauth_token`.
+Format: `2-322xxx-31626xxx1-SJsONuxxxelkKD`
+
+Add to `scdl/scdl.cfg` (or the system config, see below):
+
+```ini
+[scdl]
+auth_token = 2-322xxx-...
+```
+
+Required for GO+ tracks (256 kbps AAC) and original-quality downloads.
+
+Config file locations:
+
+- Windows: `C:\Users\<username>\.config\scdl\scdl.cfg`
+- Mac/Linux: `~/.config/scdl/scdl.cfg`
+- If `XDG_CONFIG_HOME` is set: `$XDG_CONFIG_HOME/scdl/scdl.cfg`
+
+### YouTube (cookies) (librewolf example)
+
+yt-dlp reads browser cookies for age-restricted or private content. Set in `ytdl.cfg`:
+
+```ini
+[ytdl]
+cookies_from_browser = firefox:C:\Users\$USER$\AppData\Roaming\librewolf\Profiles\xxxx.default-default
+```
+
+**Close LibreWolf (or your browser) before syncing.** Open browsers rotate session cookies
+mid-download and invalidate them after ~150 items on large playlists.
+
+Workflow:
+
+1. Open LibreWolf → log into YouTube (refresh session)
+2. **Close LibreWolf completely**
+3. Run the sync
+
+---
+
+## GO+ / Restricted tracks (SoundCloud)
+
+The duration filter (`duration>30` in `scdl.cfg`) skips 30 s preview snips automatically.
+After each run, three files are written to `archive_trackers/sc/`:
+
+| File | Content |
+| --- | --- |
+| `<playlist>.txt` | sync archive (downloaded tracks + file paths) |
+| `<playlist>.failed` | tracks that failed, tagged by reason |
+| `<playlist>.premium` | tracks skipped as ≤30 s snips |
+
+Tags in `.failed`:
+
+| Tag | Meaning |
+| --- | --- |
+| `[GO+]` | Full track behind SoundCloud GO+ paywall (`policy=SNIP`) |
+| `[MONETIZE]` | Ad-gated stream yt-dlp cannot negotiate (e.g. major-label uploads) |
+| `[BLOCKED]` | Geo/copyright block (`policy=BLOCK`) |
+| `[FAIL]` | Any other error, with raw error message appended |
+
+Run `python src/cleanup_short_tracks.py` (dry run) or `--delete` to purge existing snips.
+
+---
+
+## Data layout
+
+```text
+playlists/
+  sc/                 # SoundCloud audio, one subfolder per playlist
+  yt/                 # YouTube audio (m4a), one subfolder per playlist
+  yt-video/           # YouTube video (mp4), one subfolder per playlist
+
+archive_trackers/
+  sc/                 # per-playlist .txt, .failed, .premium
+  yt/                 # per-playlist .txt, .failed, .errors.log
+  yt-video/           # per-playlist .txt, .failed, .errors.log
+
+src/
+  sc-playlists-list.md      # SoundCloud playlist URLs (gitignored)
+  yt-playlists.md           # YouTube audio playlist URLs (gitignored)
+  yt-video-playlists.md     # YouTube video playlist URLs (gitignored)
+
+scdl/scdl.cfg         # SC config: client_id, auth_token, path, name_format (gitignored)
+ytdl.cfg              # YT config: cookies_from_browser, path, video_path (gitignored)
+```
+
+Archive line format: `soundcloud <track_id> <absolute_path>` (SC) or `youtube <video_id> <absolute_path>` (YT).

@@ -10,6 +10,8 @@ __pycache__/
 *.aif
 *.wav
 *.zip
+*.mp4
+*.jpg
 .vscode
 .venv
 .env
@@ -21,6 +23,7 @@ archive_trackers/
 .claude/
 playlists-list.md
 yt-playlists.md
+yt-video-playlists.md
 ytdl.cfg
 best-sample-sources.md
 sc-playlists-list.md
