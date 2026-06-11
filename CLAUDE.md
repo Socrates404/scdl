@@ -32,16 +32,24 @@ scdl -l <url> --sync
 
 # Sync all playlists from the list file
 python src/sync_sc_playlists.py
-python src/sync_sc_playlists.py --delay 5 --max-errors 3
+python src/sync_sc_playlists.py --delay 15 --max-errors 3
+python src/sync_sc_playlists.py --force-all        # full sync, detects removals
+python src/sync_sc_playlists.py --only 2 5         # run only playlists 2 and 5
+python src/sync_sc_playlists.py --skip 3           # skip playlist 3
+python src/sync_sc_playlists.py --from 4           # start from playlist 4
+python src/sync_sc_playlists.py --resume           # resume last interrupted run
 ```
 
 ## Architecture
 
 ### `scdl/scdl.py`
+
 The main entry point. `_main()` parses CLI args (docopt), loads `scdl.cfg`, then calls `download_url()`. `_build_ytdl_params()` translates scdl's CLI flags into yt-dlp API params. The output filename template is built by `_build_ytdl_output_filename()` and switched per-track at runtime by `OuttmplPP`.
 
 ### `scdl/patches/`
+
 Custom yt-dlp post/pre-processors injected into the `YoutubeDL` instance in `download_url()`:
+
 - `sync_download_archive.py` — `SyncDownloadHelper` manages the `--sync` archive file. It hooks into `_match_entry` to track which IDs are seen, then in `post_download()` renames removed tracks to `[unsync] <name>` and rewrites the archive. It also detects playlist renames and moves files accordingly.
 - `mutagen_postprocessor.py` — replaces yt-dlp's built-in EmbedThumbnail/FFmpegMetadata with a mutagen-based one for better format support.
 - `switch_outtmpl_preprocessor.py` (`OuttmplPP`) — switches the output template between a standalone-track format and a playlist-track format based on `info_dict["playlist"]`.
@@ -52,20 +60,29 @@ Custom yt-dlp post/pre-processors injected into the `YoutubeDL` instance in `dow
 
 ### `src/sync_sc_playlists.py`
 
-Reads playlist URLs from `src/sc-playlists-list.md` (one `https://...` URL per line), then for each URL:
-1. `heal_all_archives()` — fixes stale archive paths (missing `sc/` layer, digit-padding mismatches) without network access.
-2. `fix_index_shifts()` — runs `yt-dlp --flat-playlist` to fetch current track order from SC, compares to the archive, and renames local files so they match the new indices before scdl runs. This avoids re-downloads when tracks are deleted from a playlist, shifting the indices of remaining tracks.
-3. `run_scdl()` — runs `scdl --sync` as a subprocess, monitors output for consecutive errors (rate-limit guard), and aborts early if needed.
+Reads playlist URLs from `src/sc-playlists-list.md` (one `https://...` URL per line). **Indices follow line order in that file** — line 1 = `--only 1`, line 15 = `--only 15`. No sorting is applied; the user controls order via the file.
+
+For each URL, unless `--force-all` is passed:
+
+1. **Fast-path** (`_fast_path()`): uses yt-dlp's Python API (no subprocess) to fetch track IDs. First checks the 3 oldest tracks (positions 1–3) as a playlist identity sanity check, then checks position N+1 (where N = archive count) to see if anything new exists. If nothing at N+1 → skip entirely. If something found → run scdl with `-o N+1`.
+
+2. **`run_scdl()`**: runs `scdl --sync --hide-progress` as a subprocess. Filters output to show only new downloads, errors, and warnings. The consecutive-error counter resets on any `[soundcloud]` processing line (not just active download progress), so scattered errors don't falsely trigger the rate-limit abort.
+
+3. **After each playlist**: saves resume state to `.sync-state.json`. Use `--resume` to pick up where a run was interrupted.
+
+`--force-all` disables the fast-path and runs a full scdl sync for every playlist — the only mode that detects removed tracks (`[unsync]`).
 
 ### Data Layout
-```
+
+```text
 archive_trackers/sc/        # per-playlist archive .txt files (format: "soundcloud <id> <filepath>")
 playlists/sc/               # downloaded audio files, one subfolder per playlist
-src/sc-playlists-list.md            # list of SC playlist URLs to sync (gitignored)
+src/sc-playlists-list.md    # list of SC playlist URLs to sync (gitignored)
 scdl/scdl.cfg               # local config (client_id, auth_token, path, name_format)
 ```
 
 ### Archive File Format
+
 Each line: `soundcloud <track_id> <absolute_path_to_file>`
 
 The archive is the source of truth for `--sync`. `SyncDownloadHelper` reads it on startup and rewrites it after every run.
@@ -73,6 +90,7 @@ The archive is the source of truth for `--sync`. `SyncDownloadHelper` reads it o
 ## Config
 
 `scdl/scdl.cfg` (gitignored for credentials):
+
 ```ini
 [scdl]
 client_id =

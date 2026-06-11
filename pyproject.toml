@@ -13,6 +13,7 @@ dependencies = [
     "mutagen>=1.47.0",
     "soundcloud-v2>=1.6.1",
     "yt-dlp>=2026.2.21",
+    "tqdm>=4.0.0",
 ]
 classifiers = [
     "Programming Language :: Python",

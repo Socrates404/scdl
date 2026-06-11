@@ -30,19 +30,29 @@ python src/sync_sc_playlists.py --delay 15    # sync all SoundCloud playlists
 python src/cleanup_short_tracks.py --delete   # purge any GO+ 30s snips
 python src/sync_yt_playlists.py --delay 15    # sync all YouTube audio playlists
 ```
+/!\ make sure to be logged-in in your browser and have it preferably closed 
+(cookies are specified in ytdl.cfg)
 
 ---
 
 ## SoundCloud
 
 ```sh
-# Sync one playlist (downloads new, marks removed as [unsync]) (make sure to use the "--sync" flag!)
+# Sync one playlist (downloads new, marks removed as [unsync])
 scdl -l https://soundcloud.com/artist/sets/playlist-name --sync
 
 # Sync all playlists listed in src/sc-playlists-list.md
 python src/sync_sc_playlists.py
-python src/sync_sc_playlists.py --delay 15      # slower, if hitting 403s
-python src/sync_sc_playlists.py --max-errors 3  # abort earlier on rate limits
+python src/sync_sc_playlists.py --delay 15         # slower inter-playlist delay (default 8s ±50%)
+python src/sync_sc_playlists.py --max-errors 3     # abort a playlist after N consecutive errors (default 5)
+python src/sync_sc_playlists.py --force-all        # full sync every playlist (also detects removals → [unsync])
+python src/sync_sc_playlists.py --resume           # resume last interrupted run
+python src/sync_sc_playlists.py --verbose          # show all scdl/yt-dlp output unfiltered
+
+# Run a subset (indices = line order in sc-playlists-list.md, stable across runs)
+python src/sync_sc_playlists.py --only 2 5         # run only playlists 2 and 5
+python src/sync_sc_playlists.py --skip 3 7         # skip playlists 3 and 7
+python src/sync_sc_playlists.py --from 4           # start from playlist 4
 
 # One-off downloads
 scdl -l https://soundcloud.com/artist/track-name           # single track
@@ -52,6 +62,54 @@ scdl -l https://soundcloud.com/artist -f                   # likes
 scdl -l https://soundcloud.com/artist -t                   # uploads only
 scdl me -f                                                 # your own likes (requires auth)
 ```
+
+Archives auto-named and stored in `archive_trackers/sc/`.
+
+### How the fast-path sync works
+
+By default `sync_sc_playlists.py` avoids scanning entire playlists. SoundCloud returns newest-added tracks first, so new songs always appear at the top of a playlist. The fast-path exploits this:
+
+Assumes new tracks are **appended to the end** of the playlist (oldest = position 1, newest = position N). This is the typical behaviour for user-curated SC playlists.
+
+#### Step 1 — sanity check (no download)
+
+```sh
+yt-dlp --flat-playlist --print id --playlist-items 1:3 --quiet <url>
+```
+
+- `--flat-playlist` fetches the playlist index from SC's API — no audio downloaded.
+- `--print id` prints only the track ID of each entry, one per line.
+- `--playlist-items 1:3` limits to the 3 oldest tracks (1-based, inclusive).
+
+These 3 IDs are checked against the local archive. Since they are the oldest songs in the playlist, they should always be in the archive. If none match, the playlist may have been replaced or radically reordered → fall back to full sync.
+
+#### Step 2 — find the frontier
+
+```text
+N = number of lines in archive_trackers/sc/<playlist>.txt
+```
+
+Each archive line is `soundcloud <track_id> <filepath>`, so N is simply the count of downloaded tracks. New songs, if any, must be at positions N+1, N+2, … on SC.
+
+```sh
+yt-dlp --flat-playlist --print id --playlist-items {N+1}:{N+1} --quiet <url>
+```
+
+- If this returns **nothing** → playlist unchanged → **skip entirely** (no scdl call).
+- If this returns **an ID** → new songs start at N+1 → proceed to Step 3.
+
+#### Step 3 — download only new songs
+
+```sh
+scdl -l <url> --sync --hide-progress -o {N+1} ...
+```
+
+- `-o N+1` tells scdl to start at position N+1 (`--playlist-items N+1:` internally).
+- `SyncDownloadHelper` sees that `-o` is set and marks all existing archive entries that weren't downloaded this run as **"not evaluated"** — so they are preserved in the archive instead of being falsely marked `[unsync]`.
+
+Total API calls per playlist in fast-path: **≤ 4** (3 for sanity + 1 for frontier check), versus up to hundreds for a full sync.
+
+`--force-all` disables the fast-path and runs a full `scdl --sync` for every playlist. This is the only mode that detects tracks *removed* from a playlist and marks them `[unsync]`.
 
 Archives auto-named and stored in `archive_trackers/sc/`.
 
