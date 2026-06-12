@@ -26,7 +26,7 @@ pipx upgrade scdl
 ## Weekly sync commands
 
 ```sh
-python src/sync_sc_playlists.py --delay 15    # sync all SoundCloud playlists
+python src/sync_sc_playlists.py   # sync all SoundCloud playlists
 python src/cleanup_short_tracks.py --delete   # purge any GO+ 30s snips
 python src/sync_yt_playlists.py --delay 15    # sync all YouTube audio playlists
 ```

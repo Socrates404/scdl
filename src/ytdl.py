@@ -15,11 +15,13 @@ import argparse
 import configparser
 import logging
 import shlex
+from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import sanitize_filename
+import yt_dlp.version as _ytdlp_ver
 
 from scdl import utils
 from scdl.patches.sync_download_archive import SyncDownloadHelper
@@ -28,6 +30,23 @@ logging.setLoggerClass(utils.YTLogger)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 logger.addHandler(logging.StreamHandler())
+
+_YTDLP_STALE_DAYS = 14
+
+
+def _check_ytdlp_age() -> None:
+    ver = _ytdlp_ver.__version__  # e.g. "2026.06.09"
+    try:
+        parts = [int(x) for x in ver.split(".")]
+        release_date = date(parts[0], parts[1], parts[2])
+        age = (date.today() - release_date).days
+        if age >= _YTDLP_STALE_DAYS:
+            logger.warning(
+                f"[ytdl] yt-dlp is {age} days old (v{ver}). "
+                f"Run: uv sync --upgrade-package yt-dlp"
+            )
+    except (ValueError, IndexError):
+        pass
 
 _ROOT = Path(__file__).parent.parent
 _ARCHIVE_BASE = _ROOT / "archive_trackers"
@@ -170,6 +189,7 @@ def _resolve_cfg_path(raw: str | None, fallback: str) -> str:
 
 
 def main() -> None:
+    _check_ytdlp_age()
     cfg = _load_config()
     cfg_cookies = cfg.get("ytdl", "cookies_from_browser", fallback=None) or None
 
