@@ -10,6 +10,26 @@ This is a local fork/customization of [scdl-org/scdl](https://github.com/scdl-or
 - `scdl/patches/sync_download_archive.py` — custom sync archive management (not in upstream)
 - `scdl/scdl.cfg` — local config (gitignored credentials, local paths)
 
+## Keeping the repo up to date
+
+Two independent update paths:
+
+**yt-dlp** (pip dep — do whenever `ytdl.py` warns about staleness):
+
+```powershell
+uv sync --upgrade-package yt-dlp
+```
+
+**scdl upstream** (monthly, or when SoundCloud behaviour changes):
+
+```powershell
+git fetch upstream
+git merge upstream/master
+uv sync   # regenerate lock if pyproject.toml changed
+```
+
+The merge is almost always clean. The **only file that ever has conflicts is `scdl/scdl.py`** — everything else (`src/`, `scdl/patches/`, configs) is local-only and never touched by upstream. If `pyproject.toml` conflicts, the usual cause is the `yt-dlp` version pin; take upstream's version and add back `tqdm>=4.0.0` (used by `src/sync_sc_playlists.py`).
+
 ## Commands
 
 ```powershell

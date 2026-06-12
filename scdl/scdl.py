@@ -543,7 +543,15 @@ def _build_ytdl_params(url: str, scdl_args: SCDLArgs) -> tuple[str, dict, list]:
             argv.append(param)
             argv.append(value)
 
-    logger.debug(f"[debug] yt-dlp args: {url} {' '.join(argv)}")
+    _redacted = list(argv)
+    for _flag in ("--password", "--username"):
+        try:
+            _i = _redacted.index(_flag)
+            if _i + 1 < len(_redacted):
+                _redacted[_i + 1] = "***"
+        except ValueError:
+            pass
+    logger.debug(f"[debug] yt-dlp args: {url} {' '.join(_redacted)}")
 
     return url, utils.cli_to_api(argv), postprocessors
 
