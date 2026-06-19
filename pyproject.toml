@@ -29,10 +29,8 @@ classifiers = [
 
 [dependency-groups]
 dev = [
-    "music-tag>=0.4.3",
     "mypy>=1.13.0",
     "pytest>=8.3.4",
-    "pytest-dotenv>=0.5.2",
     "ruff>=0.8.3",
     "types-requests>=2.32.0.20241016",
     "typing_extensions>=4.12.2; python_version < '3.11'",

@@ -2,6 +2,7 @@
 import argparse
 import json
 import random
+import re
 import subprocess
 import sys
 import time
@@ -16,7 +17,6 @@ ARCHIVE_DIR = _ROOT / "archive_trackers" / "sc"
 SC_PLAYLIST_DIR = _ROOT / "playlists" / "sc"
 STATE_FILE = _ROOT / ".sync-state.json"
 RATE_LIMIT_COOLDOWN = 120
-RETRY_DELAY = 30
 _SANITY_N = 3   # first N tracks fetched to verify playlist identity
 
 _verbose = False
@@ -188,6 +188,11 @@ _HIDE_IN = (
     "has already been recorded in the archive", "has already been downloaded",
 )
 
+# ERROR: lines that are expected noise (deleted/unavailable tracks) — suppressed unless --verbose
+_SUPPRESS_ERRORS = (
+    "Unable to download JSON metadata: HTTP Error 404",
+)
+
 
 def _show(line: str) -> bool:
     if _verbose:
@@ -196,6 +201,8 @@ def _show(line: str) -> bool:
     if not s:
         return False
     if any(s.startswith(p) for p in _SHOW_STARTS):
+        if any(sub in s for sub in _SUPPRESS_ERRORS):
+            return False
         return True
     if any(sub in s for sub in _SHOW_IN):
         return True
@@ -396,7 +403,7 @@ def main():
                 remaining, args.delay, args.max_errors, args.force_all,
                 track_state=True, _state_urls=all_urls, _state_offset=done,
             )
-            _finalize(failed, args)
+            _finalize(failed)
             return
         print("No interrupted run found — starting fresh.\n")
         _clear_state()
@@ -426,38 +433,57 @@ def main():
 
     _save_state(to_run, 0)
     failed = sync_list(to_run, args.delay, args.max_errors, args.force_all, track_state=True)
-    _finalize(failed, args)
+    _finalize(failed)
 
 
-def _finalize(failed: list[str], args) -> None:
+_FAIL_TAG_RE = re.compile(r"^\[FAIL\]", re.MULTILINE)
+
+
+def _failed_playlist_stems(urls: list[str]) -> list[str]:
+    """Stems of playlists whose .failed file has at least one [FAIL] entry
+    (DRM-protected etc.) — re-running scdl won't fix those, but YouTube recovery
+    might. [FOUND]/[GO+]/[BLOCKED]/[MONETIZE] entries are left out: retry_failed_with_ytdl.py
+    only acts on [FAIL], and a file with only those tags has nothing for it to do."""
+    stems = []
+    for u in urls:
+        failed_path = archive_path(u).with_suffix(".failed")
+        if not failed_path.exists():
+            continue
+        if _FAIL_TAG_RE.search(failed_path.read_text(encoding="utf-8", errors="replace")):
+            stems.append(archive_path(u).stem)
+    return stems
+
+
+def _run_youtube_retry(urls: list[str]) -> None:
+    stems = _failed_playlist_stems(urls)
+    if not stems:
+        print("\nNo track-level failures to recover via YouTube.")
+        return
+    script = _ROOT / "src" / "retry_failed_with_ytdl.py"
+    for stem in stems:
+        print(f"\n--- {stem} ---")
+        subprocess.run([sys.executable, str(script), stem], check=False)
+
+
+def _finalize(failed: list[str]) -> None:
     if not failed:
         print("\nAll done.")
         _clear_state()
         return
 
-    print(f"\n{len(failed)} playlist(s) failed.")
+    print(f"\n{len(failed)} playlist(s) failed:")
+    for u in failed:
+        print(f"  {u}")
+
     try:
-        answer = input("Retry? [y/N] ").strip().lower()
+        answer = input("\nWant to try recovering failed tracks via YouTube instead? [y/N] ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         answer = ""
 
-    if answer != "y":
-        for u in failed:
-            print(f"  {u}")
-        sys.exit(1)
+    if answer == "y":
+        _run_youtube_retry(failed)
 
-    still_failed = sync_list(
-        failed, delay=RETRY_DELAY, max_errors=args.max_errors,
-        force_all=args.force_all, label="RETRY ",
-    )
-    if still_failed:
-        print(f"\n{len(still_failed)} failed after retry:")
-        for u in still_failed:
-            print(f"  {u}")
-        sys.exit(1)
-    else:
-        print("\nAll done (some needed a retry).")
-        _clear_state()
+    sys.exit(1)
 
 
 if __name__ == "__main__":

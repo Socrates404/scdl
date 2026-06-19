@@ -80,16 +80,20 @@ Options:
 from __future__ import annotations
 
 import configparser
+import difflib
 import importlib
 import importlib.metadata
 import logging
 import posixpath
+import re
 import shlex
 import sys
+import unicodedata
 from pathlib import Path
-from urllib.parse import urlparse
 from typing import TYPE_CHECKING, TypedDict
+from urllib.parse import urlparse
 
+import mutagen
 from docopt import docopt
 from soundcloud import (
     AlbumPlaylist,
@@ -98,7 +102,7 @@ from soundcloud import (
     User,
 )
 from yt_dlp import YoutubeDL
-from yt_dlp.utils import locked_file
+from yt_dlp.utils import locked_file, sanitize_filename
 
 from scdl import utils
 from scdl.patches.mutagen_postprocessor import MutagenPP
@@ -556,6 +560,127 @@ def _build_ytdl_params(url: str, scdl_args: SCDLArgs) -> tuple[str, dict, list]:
     return url, utils.cli_to_api(argv), postprocessors
 
 
+# Tags a genuinely different version/edit of a track. If exactly one side of a
+# comparison has one of these (after normalization), the tracks must never be
+# treated as duplicates, regardless of how similar the rest of the text is —
+# token-set scoring treats subset matches (e.g. "Song" vs "Song Remix") as
+# near-perfect, so this guards the one case that scorer can't tell apart.
+_VERSION_MARKERS = frozenset({
+    "remix", "acoustic", "live", "sped", "slowed", "nightcore", "cover",
+    "extended", "instrumental", "edit", "vip", "bootleg", "flip", "mashup",
+    "reprise",
+})
+
+# Purely decorative bracket/parenthetical content — safe to discard because it
+# never changes which song is being referred to (unlike _VERSION_MARKERS).
+_DECORATIVE_BRACKET_RE = re.compile(
+    r"[\(\[\{]\s*(?:"
+    r"official\s*(?:video|audio|music\s*video|visualizer|lyric\s*video)?"
+    r"|lyrics?"
+    r"|hq|hd|high\s*quality"
+    r"|free\s*download|free\s*dl"
+    r"|prod\.?\s*by\s+[^)\]}]+"
+    r")\s*[\)\]\}]",
+    re.IGNORECASE,
+)
+_FEAT_RE = re.compile(r"\b(feat\.?|ft\.?|featuring)\b", re.IGNORECASE)
+
+
+def _normalize_track_name(name: str) -> str:
+    """Strip filename decorations (playlist index, archive-id prefix, [unsync] marker,
+    diacritics, decorative tags, feat./ft. variance, punctuation noise) so two names
+    can be compared on title/uploader content alone. Used only for comparison — never
+    affects what gets written to the log or to disk."""
+    name = re.sub(r"^\d+\.\s*", "", name)
+    name = re.sub(r"^\[(unsync|[^\]]*)\]\s*", "", name)
+    name = unicodedata.normalize("NFKD", name)
+    name = "".join(c for c in name if not unicodedata.combining(c))
+    name = _FEAT_RE.sub("feat", name)
+    name = _DECORATIVE_BRACKET_RE.sub("", name)
+    name = re.sub(r"[-–—~]+", " ", name)  # hyphen, en dash, em dash, tilde  # noqa: RUF001
+    name = re.sub(r"[^\w\s]", " ", name)
+    return re.sub(r"\s+", " ", name).strip().lower()
+
+
+def _token_set_ratio(a: str, b: str) -> float:
+    """fuzzywuzzy-style token-set similarity (0-100), built on stdlib difflib only:
+    compares the shared-token core against each side's full token set, so noise that
+    appears on only one side (extra uploader text, a decorative suffix) doesn't tank
+    the score the way a plain SequenceMatcher.ratio() over the full strings would."""
+    tokens_a, tokens_b = set(a.split()), set(b.split())
+    intersection = tokens_a & tokens_b
+    t0 = " ".join(sorted(intersection))
+    t1 = " ".join(sorted(intersection | tokens_a))
+    t2 = " ".join(sorted(intersection | tokens_b))
+    return max(
+        difflib.SequenceMatcher(None, t0, t1).ratio(),
+        difflib.SequenceMatcher(None, t0, t2).ratio(),
+        difflib.SequenceMatcher(None, t1, t2).ratio(),
+    ) * 100
+
+
+def _get_audio_duration(path: Path) -> float | None:
+    """Best-effort duration (seconds) of an existing audio file, for logging
+    alongside match decisions. Never raises — a corrupt/partial file just yields None."""
+    try:
+        audio = mutagen.File(path)
+        if audio is not None and audio.info is not None:
+            return audio.info.length
+    except Exception:
+        pass
+    return None
+
+
+def _find_similar_existing_file(
+    name: str, dest_dir: Path, title: str | None = None, duration: float | None = None, threshold: float = 90
+) -> Path | None:
+    """Look for a file already in dest_dir whose name closely matches `name` — e.g. a
+    track downloaded earlier under a different ID, or placed there manually.
+
+    `title` (uploader stripped out), if given, is also scored on its own against each
+    candidate's full name and the better of the two scores is used. This is what
+    catches reposts: when the uploader genuinely differs on both sides (not just one
+    side having extra noise), token_set_ratio on the combined "uploader - title"
+    string is diluted by two *different* uploader tokens — comparing title-only
+    sidesteps that, since the existing file's uploader then just becomes one-sided
+    noise (token_set_ratio's strength) instead of a second, conflicting signal.
+
+    `duration` (seconds, if known) is only used for logging/diagnostics right now —
+    see the plan doc for why it isn't gating the decision yet (legitimate duration
+    variance across mixes/re-encodes means a hard cutoff would cause false negatives;
+    proper combination needs empirical tuning against real data first)."""
+    if not dest_dir.is_dir():
+        return None
+    candidate = _normalize_track_name(name)
+    candidate_title = _normalize_track_name(title) if title else None
+    candidate_tokens = set(candidate.split())
+    best_match: Path | None = None
+    best_score = 0.0
+    for path in dest_dir.iterdir():
+        if not path.is_file():
+            continue
+        existing = _normalize_track_name(path.stem)
+        existing_tokens = set(existing.split())
+
+        marker_asymmetry = (candidate_tokens & _VERSION_MARKERS) != (existing_tokens & _VERSION_MARKERS)
+        if marker_asymmetry:
+            continue
+
+        score = _token_set_ratio(candidate, existing)
+        if candidate_title:
+            score = max(score, _token_set_ratio(candidate_title, existing))
+        if logger.isEnabledFor(logging.DEBUG):
+            existing_duration = _get_audio_duration(path)
+            duration_diff = (
+                abs(duration - existing_duration) if duration is not None and existing_duration is not None else None
+            )
+            logger.debug(f"[scdl] dedup candidate: {path.name!r} score={score:.1f} duration_diff={duration_diff}")
+
+        if score > best_score:
+            best_score, best_match = score, path
+    return best_match if best_score >= threshold else None
+
+
 def download_url(url: str, **scdl_args: Unpack[SCDLArgs]) -> None:
     url, params, postprocessors = _build_ytdl_params(url, scdl_args)
 
@@ -586,11 +711,14 @@ def download_url(url: str, **scdl_args: Unpack[SCDLArgs]) -> None:
             _fl_downloaded: set[str] = set()
             _fl_errors: dict[str, str] = {}      # archive_id -> first error message
             _current_aid: list[str] = [""]       # mutable ref updated per track
+            _fl_playlist_title: list[str | None] = [None]
 
             _old_match_entry = ydl._match_entry
 
             def _fl_match_entry(ydl_, info_dict, incomplete=False, silent=False):
                 result = _old_match_entry(info_dict, incomplete, silent)
+                if _fl_playlist_title[0] is None and info_dict.get("playlist"):
+                    _fl_playlist_title[0] = info_dict["playlist"]
                 if result is None:
                     aid = ydl_._make_archive_id(info_dict)
                     if aid is None:  # skip playlist-level entries with no valid id
@@ -605,6 +733,7 @@ def download_url(url: str, **scdl_args: Unpack[SCDLArgs]) -> None:
                         ),
                         "title": info_dict.get("title") or "",
                         "uploader": info_dict.get("uploader") or "",
+                        "duration": info_dict.get("duration"),
                     }
                     _current_aid[0] = aid
                 return result
@@ -695,6 +824,14 @@ def download_url(url: str, **scdl_args: Unpack[SCDLArgs]) -> None:
                 except Exception:
                     return ""
 
+            in_playlist_folder = bool(_fl_playlist_title[0]) and not scdl_args.get("no_playlist_folder")
+            dest_dir = (
+                scdl_args["path"] / sanitize_filename(_fl_playlist_title[0], restricted=False)
+                if in_playlist_folder
+                else scdl_args["path"]
+            )
+            _fl_found: dict[str, Path] = {}  # archive_id -> matched existing file path
+
             with open(failed_log_path, "w", encoding="utf-8") as fh:
                 for archive_id, info in _fl_attempted.items():
                     if archive_id not in _fl_downloaded:
@@ -702,6 +839,15 @@ def download_url(url: str, **scdl_args: Unpack[SCDLArgs]) -> None:
                         name = " - ".join(filter(None, [info["uploader"], info["title"]])) or archive_id
                         error = _fl_errors.get(archive_id, "")
 
+                        found_match = _find_similar_existing_file(
+                            name, dest_dir, title=info.get("title"), duration=info.get("duration")
+                        )
+
+                        if found_match is not None:
+                            # Already resolved — gets added to the sync archive below,
+                            # so it shouldn't also linger in .failed as if unresolved.
+                            _fl_found[archive_id] = found_match
+                            continue
                         if "HTTP Error 404" in error:
                             track_id = archive_id.split()[-1]
                             policy = _sc_track_policy(track_id)
@@ -723,9 +869,16 @@ def download_url(url: str, **scdl_args: Unpack[SCDLArgs]) -> None:
 
                         fh.write(f"{tag} {name}\n")
                         fh.write(f"         {track_url}\n")
-                        if tag == "[FAIL]   " and error_line:
+                        if error_line:
                             fh.write(error_line)
                         fh.write("\n")
+
+            # A [FOUND] track already exists on disk — record it in the sync archive so
+            # future syncs treat it as downloaded instead of re-attempting and re-matching it.
+            if _fl_found and scdl_args.get("sync"):
+                with locked_file(scdl_args["sync"], "a", encoding="utf-8") as archive_file:
+                    for archive_id, matched_path in _fl_found.items():
+                        archive_file.write(f"{archive_id} {matched_path}\n")
 
 
 if __name__ == "__main__":
