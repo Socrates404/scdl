@@ -133,28 +133,18 @@ def _attempt_download(query: str, dest_folder: Path, stub: str, cookies: str | N
     return audio
 
 
-def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("playlist", help="Failed-file stem/substring or path")
-    p.add_argument("--dry-run", action="store_true", help="Show what would be retried without downloading")
-    p.add_argument("--delay", type=float, default=3.0, metavar="S",
-                   help="Base delay between tracks (default 3s, ±50%% jitter)")
-    args = p.parse_args()
-
-    failed_path = _resolve_failed_file(args.playlist)
+def _process_failed_file(failed_path: Path, dry_run: bool, delay: float, cfg_cookies: str | None) -> tuple[int, int]:
+    """Retry every [FAIL] entry in one .failed file. Returns (resolved, total)."""
     txt_path = failed_path.with_suffix(".txt")
     entries = _parse_blocks(failed_path.read_text(encoding="utf-8"))
     targets = [e for e in entries if e["tag"] == "FAIL"]
 
     if not targets:
         print(f"No [FAIL] entries in {failed_path.name}")
-        return
+        return 0, 0
 
     dest_folder = _dest_folder(txt_path)
     print(f"{len(targets)} [FAIL] track(s) in {failed_path.name} -> {dest_folder}")
-
-    cfg = ytdl._load_config()
-    cfg_cookies = cfg.get("ytdl", "cookies_from_browser", fallback=None) or None
 
     resolved_ids: set[str] = set()
     resolved_entries: list[dict] = []
@@ -171,7 +161,7 @@ def main() -> None:
         queries = _search_queries(name)
         print(f"[{i}/{len(targets)}] {name} — searching YouTube: {queries[0]!r}")
 
-        if args.dry_run:
+        if dry_run:
             still_failed.append(entry)
             continue
 
@@ -195,11 +185,11 @@ def main() -> None:
         resolved_entries.append(entry)
 
         if i < len(targets):
-            time.sleep(args.delay * random.uniform(0.5, 1.5))
+            time.sleep(delay * random.uniform(0.5, 1.5))
 
-    if args.dry_run:
-        print(f"\nDry run: would retry {len(targets)} track(s).")
-        return
+    if dry_run:
+        print(f"Dry run: would retry {len(targets)} track(s).")
+        return 0, len(targets)
 
     remaining = [e for e in entries if e not in resolved_entries]
     if remaining:
@@ -207,9 +197,49 @@ def main() -> None:
     else:
         failed_path.unlink()
 
-    print(f"\nRecovered {len(resolved_ids)}/{len(targets)} track(s) via YouTube.")
+    print(f"Recovered {len(resolved_ids)}/{len(targets)} track(s) via YouTube.")
     if still_failed:
         print(f"{len(still_failed)} still unresolved (kept in {failed_path.name if remaining else 'n/a'}).")
+    return len(resolved_ids), len(targets)
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("playlist", nargs="?", help="Failed-file stem/substring or path")
+    p.add_argument("--all", action="store_true",
+                   help="Process every playlist with [FAIL] entries in archive_trackers/sc")
+    p.add_argument("--dry-run", action="store_true", help="Show what would be retried without downloading")
+    p.add_argument("--delay", type=float, default=3.0, metavar="S",
+                   help="Base delay between tracks (default 3s, ±50%% jitter)")
+    args = p.parse_args()
+
+    if not args.all and not args.playlist:
+        p.error("playlist is required unless --all is given")
+
+    cfg = ytdl._load_config()
+    cfg_cookies = cfg.get("ytdl", "cookies_from_browser", fallback=None) or None
+
+    if args.all:
+        failed_paths = sorted(
+            f for f in ARCHIVE_DIR.glob("*.failed")
+            if re.search(r"^\[FAIL\]", f.read_text(encoding="utf-8", errors="replace"), re.MULTILINE)
+        )
+        if not failed_paths:
+            print("No playlists with [FAIL] entries.")
+            return
+
+        total_resolved = total_targets = 0
+        for i, failed_path in enumerate(failed_paths, 1):
+            print(f"\n--- [{i}/{len(failed_paths)}] {failed_path.stem} ---")
+            resolved, total = _process_failed_file(failed_path, args.dry_run, args.delay, cfg_cookies)
+            total_resolved += resolved
+            total_targets += total
+
+        print(f"\n{total_resolved}/{total_targets} recovered via YouTube across {len(failed_paths)} playlist(s).")
+        return
+
+    failed_path = _resolve_failed_file(args.playlist)
+    _process_failed_file(failed_path, args.dry_run, args.delay, cfg_cookies)
 
 
 if __name__ == "__main__":

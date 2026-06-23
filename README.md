@@ -242,14 +242,16 @@ Workflow:
 
 ## GO+ / Restricted tracks (SoundCloud)
 
-The duration filter (`duration>30` in `scdl.cfg`) skips 30 s preview snips automatically.
-After each run, three files are written to `archive_trackers/sc/`:
+Some tracks end up ≤30s on disk (SoundCloud serves a preview snip instead of the
+full track). After `--sync`, run:
 
-| File | Content |
-| --- | --- |
-| `<playlist>.txt` | sync archive (downloaded tracks + file paths) |
-| `<playlist>.failed` | tracks that failed, tagged by reason |
-| `<playlist>.premium` | tracks skipped as ≤30 s snips |
+```sh
+python src/cleanup_short_tracks.py --delete   # remove ≤30s snips, mark them [FAIL]
+python src/retry_failed_with_ytdl.py --all    # pull [FAIL] tracks from YouTube instead (all playlists) Or specify which playlist number to retry
+```
+
+`archive_trackers/sc/` holds `<playlist>.txt` (sync archive), `<playlist>.failed`
+(failed tracks, tagged by reason), `<playlist>.premium` (snips skipped pre-download).
 
 Tags in `.failed`:
 
@@ -258,9 +260,7 @@ Tags in `.failed`:
 | `[GO+]` | Full track behind SoundCloud GO+ paywall (`policy=SNIP`) |
 | `[MONETIZE]` | Ad-gated stream yt-dlp cannot negotiate (e.g. major-label uploads) |
 | `[BLOCKED]` | Geo/copyright block (`policy=BLOCK`) |
-| `[FAIL]` | Any other error, with raw error message appended |
-
-Run `python src/cleanup_short_tracks.py` (dry run) or `--delete` to purge existing snips.
+| `[FAIL]` | Any other error, with raw error message appended (includes ≤30s snips) |
 
 ---
 

@@ -79,6 +79,15 @@ class SyncDownloadHelper:
 
         self._ydl._match_entry = partial(_match_entry, self._ydl)
 
+    def discard(self, archive_id: str) -> None:
+        """Drop a track from this run's tracked state without touching the live
+        yt-dlp archive — used when a file downloaded successfully but was later
+        found to be invalid (e.g. a GO+ preview snip) and deleted, so it isn't
+        written to the sync archive or counted as a slot the playlist lost."""
+        self._downloaded.discard(archive_id)
+        self._all_files.pop(archive_id, None)
+        self._attempted.pop(archive_id, None)
+
     def _check_playlist_rename(self) -> None:
         """If the playlist was renamed, move files from the old folder to the new one and update archive paths."""
         if not self._all_files or not self._playlist_title:

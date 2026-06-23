@@ -107,6 +107,7 @@ from yt_dlp.utils import locked_file, sanitize_filename
 from scdl import utils
 from scdl.patches.mutagen_postprocessor import MutagenPP
 from scdl.patches.original_filename_preprocessor import OriginalFilenamePP
+from scdl.patches.snip_detection_postprocessor import SnipDetectionPP
 from scdl.patches.switch_outtmpl_preprocessor import OuttmplPP
 from scdl.patches.sync_download_archive import SyncDownloadHelper
 
@@ -807,6 +808,37 @@ def download_url(url: str, **scdl_args: Unpack[SCDLArgs]) -> None:
             ydl._match_entry = _partial(_prem_match_entry, ydl)
 
         sync = SyncDownloadHelper(scdl_args, ydl)
+
+        def _on_snip_detected(info: dict, actual_duration: float) -> None:
+            archive_id = ydl._make_archive_id(info)
+            if archive_id is None:
+                return
+            sync.discard(archive_id)
+            if scdl_args.get("failed_log"):
+                _fl_downloaded.discard(archive_id)
+                entry = _fl_attempted.get(archive_id)
+                if entry is None:
+                    entry = _fl_attempted[archive_id] = {
+                        "url": (
+                            info.get("webpage_url")
+                            or info.get("permalink_url")
+                            or info.get("original_url")
+                            or info.get("url")
+                            or ""
+                        ),
+                        "title": info.get("title") or "",
+                        "uploader": info.get("uploader") or "",
+                        "duration": info.get("duration"),
+                    }
+                track_id = archive_id.split()[-1]
+                reported = info.get("duration")
+                _fl_errors[archive_id] = (
+                    f"[soundcloud] {track_id}: GO+ preview snip — actual audio is {actual_duration:.1f}s"
+                    + (f", not the reported {reported:.0f}s" if reported else "")
+                )
+
+        ydl.add_post_processor(SnipDetectionPP(on_snip=_on_snip_detected), "after_move")
+
         ydl.download(url)
         sync.post_download()
 
