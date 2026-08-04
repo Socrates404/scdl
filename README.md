@@ -176,6 +176,9 @@ Files land in `playlists/yt/<playlist name>/`. Archives in `archive_trackers/yt/
 ## YouTube — Video (mp4, best quality)
 
 ```sh
+# Batch run without playlist (fill "src\videos_bulk.txt" with all the videos urls)
+.\src\dl_videos_bulk_from_txt.bat
+
 # Sync one playlist
 python src/ytdl.py -l https://www.youtube.com/playlist?list=PLxxx --sync --video
 
@@ -183,6 +186,7 @@ python src/ytdl.py -l https://www.youtube.com/playlist?list=PLxxx --sync --video
 python src/sync_yt_playlists.py --video
 python src/sync_yt_playlists.py --video --delay 15
 ```
+
 
 Files land in `playlists/yt-video/<playlist name>/`. Archives in `archive_trackers/yt-video/`.
 
